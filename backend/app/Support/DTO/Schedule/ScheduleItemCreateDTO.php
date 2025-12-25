@@ -14,6 +14,7 @@ readonly class ScheduleItemCreateDTO
         public int $subjectId,
         public int $teacherUserId,
         public int $roomId,
+        public int $versionId,
         public bool $force,
         public ?string $overrideReason,
     ) {

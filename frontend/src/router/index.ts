@@ -54,6 +54,18 @@ const routes: RouteRecordRaw[] = [
         component: () => import('../pages/Chat.vue'),
         meta: { module: 'chat' },
       },
+      {
+        path: 'documents',
+        name: 'documents',
+        component: () => import('../pages/Documents.vue'),
+        meta: { permission: 'documents.view' },
+      },
+      {
+        path: 'documents/:id',
+        name: 'document-view',
+        component: () => import('../pages/DocumentView.vue'),
+        meta: { permission: 'documents.view' },
+      },
       // Admin routes
       {
         path: 'admin',
