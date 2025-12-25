@@ -4,75 +4,149 @@ namespace App\Policies;
 
 use App\Models\Assignment;
 use App\Models\User;
+use App\Support\Security\AccessScopeService;
+use Illuminate\Support\Facades\DB;
 
 class AssignmentPolicy extends BasePolicy
 {
-    /**
-     * Determine if the user can view any assignments.
-     */
     public function viewAny(User $user): bool
     {
-        // TODO: check permissions.assignments.read
-        return true;
+        return $user->permissions()->where('code', 'assignments.view')->exists();
     }
 
-    /**
-     * Determine if the user can view the assignment.
-     */
     public function view(User $user, Assignment $assignment): bool
     {
-        // TODO: check object-level permissions
-        // Student can view if assigned to them
-        // Teacher can view if they created it or assigned to their subject
-        return true;
+        $scope = AccessScopeService::forUser($user);
+
+        // Check visibility targets (group/subgroup/individual) + group access
+        $targets = $assignment->targets()->get();
+
+        foreach ($targets as $target) {
+            if ($target->student_user_id && $target->student_user_id === $user->id) {
+                return true;
+            }
+
+            if ($target->group_id) {
+                if ($scope->isMemberOfGroup($target->group_id)) {
+                    return true;
+                }
+            }
+
+            if ($target->subgroup_id) {
+                $subgroup = DB::table('subgroups')->find($target->subgroup_id);
+                if ($subgroup && $scope->isMemberOfGroup($subgroup->group_id)) {
+                    return true;
+                }
+            }
+        }
+
+        // Teacher who created it
+        if ($user->id === $assignment->teacher_user_id) {
+            return true;
+        }
+
+        return false;
     }
 
-    /**
-     * Determine if the user can create assignments.
-     */
-    public function create(User $user): bool
+    public function create(User $user, ?int $subjectId = null, ?int $groupId = null): bool
     {
-        // TODO: check permissions.assignments.create
-        return true;
+        $scope = AccessScopeService::forUser($user);
+
+        if ($scope->isAdmin()) {
+            return true;
+        }
+
+        if (!$scope->isTeacher()) {
+            return false;
+        }
+
+        // Check if teacher assigned to subject+group
+        if ($subjectId && $groupId) {
+            return DB::table('teacher_subject_group')
+                ->where('teacher_user_id', $user->id)
+                ->where('subject_id', $subjectId)
+                ->where('group_id', $groupId)
+                ->exists();
+        }
+
+        return $user->permissions()->where('code', 'assignments.create')->exists();
     }
 
-    /**
-     * Determine if the user can update the assignment.
-     */
     public function update(User $user, Assignment $assignment): bool
     {
-        // TODO: check object-level permissions
-        // Only creator or admin can update
-        return $user->id === $assignment->teacher_user_id;
+        return $this->create($user, $assignment->subject_id, null);
     }
 
-    /**
-     * Determine if the user can delete the assignment.
-     */
     public function delete(User $user, Assignment $assignment): bool
     {
-        // TODO: check object-level permissions
-        // Only creator or admin can delete
-        return $user->id === $assignment->teacher_user_id;
+        return $this->update($user, $assignment);
     }
 
-    /**
-     * Determine if the user can submit to the assignment.
-     */
     public function submit(User $user, Assignment $assignment): bool
     {
-        // TODO: check if user is target of assignment (group/subgroup/individual)
-        return true;
+        $scope = AccessScopeService::forUser($user);
+
+        if (!$scope->isStudent()) {
+            return false;
+        }
+
+        // Student only for themselves and only if in target
+        $targets = $assignment->targets()->get();
+
+        foreach ($targets as $target) {
+            if ($target->student_user_id === $user->id) {
+                return true;
+            }
+
+            if ($target->group_id) {
+                if ($scope->isMemberOfGroup($target->group_id)) {
+                    return true;
+                }
+            }
+
+            if ($target->subgroup_id) {
+                $subgroup = DB::table('subgroups')->find($target->subgroup_id);
+                if ($subgroup && $scope->isMemberOfGroup($subgroup->group_id)) {
+                    // Check if user is in this subgroup
+                    $userSubgroups = DB::table('group_members')
+                        ->where('user_id', $user->id)
+                        ->where('group_id', $subgroup->group_id)
+                        ->join('subgroups', 'subgroups.group_id', '=', 'group_members.group_id')
+                        ->where('subgroups.id', $target->subgroup_id)
+                        ->exists();
+                    if ($userSubgroups) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
     }
 
-    /**
-     * Determine if the user can grade submissions.
-     */
     public function grade(User $user, Assignment $assignment): bool
     {
-        // TODO: check permissions.assignments.grade
-        // Only teacher who created assignment or admin
-        return $user->id === $assignment->teacher_user_id;
+        $scope = AccessScopeService::forUser($user);
+
+        if ($scope->isAdmin()) {
+            return true;
+        }
+
+        if (!$scope->isTeacher()) {
+            return false;
+        }
+
+        // Check if teacher assigned to subject+group
+        return DB::table('teacher_subject_group')
+            ->where('teacher_user_id', $user->id)
+            ->where('subject_id', $assignment->subject_id)
+            ->where('group_id', function ($q) use ($assignment) {
+                $q->select('group_id')
+                    ->from('assignment_targets')
+                    ->where('assignment_id', $assignment->id)
+                    ->whereNotNull('group_id')
+                    ->limit(1);
+            })
+            ->exists();
     }
 }
-

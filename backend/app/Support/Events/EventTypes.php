@@ -24,6 +24,18 @@ class EventTypes
     // Notification events
     public const NOTIFICATION_CREATED = 'notification.created';
 
+    // Ticket events
+    public const TICKET_CREATED = 'ticket.created';
+    public const TICKET_UPDATED = 'ticket.updated';
+    public const TICKET_STATUS_CHANGED = 'ticket.status_changed';
+    public const TICKET_PRIORITY_CHANGED = 'ticket.priority_changed';
+    public const TICKET_ASSIGNED = 'ticket.assigned';
+    public const TICKET_MESSAGE_CREATED = 'ticket.message_created';
+    public const TICKET_FIRST_RESPONSE = 'ticket.first_response';
+    public const TICKET_RESOLVED = 'ticket.resolved';
+    public const TICKET_OVERDUE = 'ticket.overdue';
+    public const TICKET_ESCALATED = 'ticket.escalated';
+
     public static function all(): array
     {
         return [
@@ -35,6 +47,16 @@ class EventTypes
             self::DOCUMENT_STATUS_CHANGED,
             self::CHAT_MESSAGE_CREATED,
             self::NOTIFICATION_CREATED,
+            self::TICKET_CREATED,
+            self::TICKET_UPDATED,
+            self::TICKET_STATUS_CHANGED,
+            self::TICKET_PRIORITY_CHANGED,
+            self::TICKET_ASSIGNED,
+            self::TICKET_MESSAGE_CREATED,
+            self::TICKET_FIRST_RESPONSE,
+            self::TICKET_RESOLVED,
+            self::TICKET_OVERDUE,
+            self::TICKET_ESCALATED,
         ];
     }
 }

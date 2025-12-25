@@ -47,6 +47,8 @@ class ScheduleController extends Controller
 
     public function items(Request $request): JsonResponse
     {
+        $this->authorize('viewAny', ScheduleItem::class);
+
         $query = ScheduleItem::with(['group', 'subgroup', 'subject', 'teacher', 'room', 'version']);
 
         if ($versionId = $request->query('version_id')) {
@@ -76,6 +78,12 @@ class ScheduleController extends Controller
 
     public function createItem(ScheduleItemCreateRequest $request): JsonResponse
     {
+        $this->authorize('create', ScheduleItem::class);
+
+        if ($request->boolean('force')) {
+            $this->authorize('forceOverride', ScheduleItem::class);
+        }
+
         $dto = $request->toDTO();
 
         // Check conflicts
@@ -154,12 +162,14 @@ class ScheduleController extends Controller
 
     public function replacements(Request $request): JsonResponse
     {
+        $this->authorize('manageReplacements', ScheduleItem::class);
         // TODO: получить замены в расписании
         return response()->json(['message' => 'Not implemented']);
     }
 
     public function createReplacement(Request $request): JsonResponse
     {
+        $this->authorize('manageReplacements', ScheduleItem::class);
         // TODO: создать замену в расписании
         return response()->json(['message' => 'Not implemented']);
     }

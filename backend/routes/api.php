@@ -171,9 +171,14 @@ Route::prefix('v1')->group(function (): void {
         // Tickets
         Route::prefix('tickets')->group(function (): void {
             Route::get('/', [TicketController::class, 'index']);
-            Route::post('/', [TicketController::class, 'store']);
+            Route::post('/', [TicketController::class, 'store'])->middleware('can:tickets.create');
+            Route::get('sla/compliance', [TicketController::class, 'slaCompliance']);
+            Route::get('sla/report', [TicketController::class, 'slaReport'])->middleware('can:tickets.manage');
             Route::get('{id}', [TicketController::class, 'show']);
-            Route::put('{id}', [TicketController::class, 'update'])->middleware('can:tickets.update');
+            Route::put('{id}', [TicketController::class, 'update'])->middleware('can:tickets.manage');
+            Route::post('{id}/assign', [TicketController::class, 'assign'])->middleware('can:tickets.manage');
+            Route::post('{id}/priority', [TicketController::class, 'changePriority'])->middleware('can:tickets.manage');
+            Route::get('{id}/sla', [TicketController::class, 'ticketSlaReport']);
             Route::get('{id}/messages', [TicketController::class, 'messages']);
             Route::post('{id}/messages', [TicketController::class, 'sendMessage']);
         });
@@ -182,15 +187,25 @@ Route::prefix('v1')->group(function (): void {
         Route::prefix('rules')->middleware('can:rules.manage')->group(function (): void {
             Route::get('/', [RuleController::class, 'index']);
             Route::post('/', [RuleController::class, 'store']);
+            Route::post('validate', [RuleController::class, 'validate']);
             Route::get('{id}', [RuleController::class, 'show']);
             Route::put('{id}', [RuleController::class, 'update']);
             Route::delete('{id}', [RuleController::class, 'destroy']);
             Route::post('{id}/toggle', [RuleController::class, 'toggle']);
+            Route::post('{id}/test', [RuleController::class, 'test']);
         });
 
-        // Analytics (placeholder)
+        // Analytics
         Route::prefix('analytics')->middleware('can:analytics.view')->group(function (): void {
             Route::get('/', [AnalyticsController::class, 'index']);
+            Route::get('risks/student/{studentId}', [AnalyticsController::class, 'studentRisk']);
+            Route::get('risks/group/{groupId}', [AnalyticsController::class, 'groupRisk']);
+            Route::get('risks/report', [AnalyticsController::class, 'risksReport']);
+            Route::get('risks/trends', [AnalyticsController::class, 'riskTrends']);
+            Route::get('risks/distribution', [AnalyticsController::class, 'riskDistribution']);
+            Route::get('risks/entity/{entityType}/{entityId}', [AnalyticsController::class, 'entityRisks']);
+            Route::post('risks/{riskId}/resolve', [AnalyticsController::class, 'resolveRisk'])->middleware('can:analytics.manage');
+            Route::get('risks/export', [AnalyticsController::class, 'exportRisksReport']);
         });
 
         // Admin Roles

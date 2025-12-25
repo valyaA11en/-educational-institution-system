@@ -94,6 +94,10 @@ const menuItems = computed(() => {
     if (auth.hasPermission('users.read')) {
       items.push({ to: { name: 'admin-users' }, title: 'Пользователи', icon: 'mdi-account-multiple' })
     }
+    
+    if (auth.hasPermission('rules.manage')) {
+      items.push({ to: { name: 'admin-rules' }, title: 'Правила', icon: 'mdi-auto-fix' })
+    }
   }
 
   return items.filter(item => item.to !== null)
