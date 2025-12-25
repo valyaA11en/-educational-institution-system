@@ -79,6 +79,11 @@ const menuItems = computed(() => {
     { to: { name: 'chat' }, title: 'Чаты', icon: 'mdi-forum' },
   ]
 
+  // Documents (visible if has documents.view permission)
+  if (auth.hasPermission('documents.view')) {
+    items.push({ to: { name: 'documents' }, title: 'Документы', icon: 'mdi-file-document' })
+  }
+
   // Admin menu items (visible if has directory.manage or users.read permission)
   if (auth.hasPermission('directory.manage') || auth.hasPermission('users.read')) {
     items.push({ to: null, title: 'Админка', icon: 'mdi-cog', divider: true })

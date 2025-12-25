@@ -11,20 +11,14 @@ class Setting extends Model
 
     protected $fillable = [
         'key',
-        'value',
-        'type',
-        'description',
+        'value_json',
     ];
 
-    public function getValueAttribute($value)
+    protected function casts(): array
     {
-        return match ($this->type) {
-            'integer' => (int) $value,
-            'float' => (float) $value,
-            'boolean' => filter_var($value, FILTER_VALIDATE_BOOLEAN),
-            'json' => json_decode($value, true),
-            default => $value,
-        };
+        return [
+            'value_json' => 'array',
+        ];
     }
 }
 

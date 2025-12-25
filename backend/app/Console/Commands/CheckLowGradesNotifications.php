@@ -32,8 +32,9 @@ class CheckLowGradesNotifications extends Command
         $this->info('Checking low grades for notifications...');
 
         // Get threshold from settings (default: 0.1 = 10%)
-        $thresholdSetting = Setting::where('key', 'low_grades_threshold_percent')->first();
-        $thresholdPercent = $thresholdSetting ? (float) $thresholdSetting->value : 0.1;
+        $settingsService = app(\App\Services\SettingsService::class);
+        $thresholdData = $settingsService->get('journal.monthly.avg2.threshold_percent', ['value' => 10]);
+        $thresholdPercent = isset($thresholdData['value']) ? (float) $thresholdData['value'] / 100 : 0.1;
 
         // Get current term
         $currentTerm = DB::table('terms')

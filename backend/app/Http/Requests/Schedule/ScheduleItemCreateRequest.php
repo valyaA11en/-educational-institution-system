@@ -23,7 +23,7 @@ class ScheduleItemCreateRequest extends FormRequest
             'subject_id' => ['required', 'integer', 'exists:subjects,id'],
             'teacher_user_id' => ['required', 'integer', 'exists:users,id'],
             'room_id' => ['required', 'integer', 'exists:rooms,id'],
-            'term_id' => ['sometimes', 'integer', 'exists:terms,id'],
+            'version_id' => ['required', 'integer', 'exists:schedule_versions,id'],
             'force' => ['sometimes', 'boolean'],
             'override_reason' => ['required_if:force,true', 'nullable', 'string', 'max:500'],
         ];
@@ -41,6 +41,7 @@ class ScheduleItemCreateRequest extends FormRequest
             subjectId: (int) $data['subject_id'],
             teacherUserId: (int) $data['teacher_user_id'],
             roomId: (int) $data['room_id'],
+            versionId: (int) $data['version_id'],
             force: (bool) ($data['force'] ?? false),
             overrideReason: $data['override_reason'] ?? null,
         );
