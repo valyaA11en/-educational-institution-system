@@ -106,6 +106,12 @@ const routes: RouteRecordRaw[] = [
             component: () => import('../pages/admin/Users.vue'),
             meta: { permission: 'users.read' },
           },
+          {
+            path: 'rules',
+            name: 'admin-rules',
+            component: () => import('../pages/admin/Rules.vue'),
+            meta: { permission: 'rules.manage' },
+          },
         ],
       },
     ],

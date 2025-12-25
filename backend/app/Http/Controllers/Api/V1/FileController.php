@@ -16,6 +16,8 @@ class FileController extends Controller
 {
     public function getPresignedUploadUrl(Request $request): JsonResponse
     {
+        $this->authorize('presign', File::class);
+
         $validated = $request->validate([
             'assignment_id' => ['required', 'integer', 'exists:assignments,id'],
             'filename' => ['required', 'string', 'max:255'],

@@ -40,6 +40,8 @@ class DocumentController extends Controller
 
     public function store(Request $request): JsonResponse
     {
+        $this->authorize('create', Document::class);
+
         $validated = $request->validate([
             'type' => ['required', 'string'],
             'template_id' => ['required', 'integer', 'exists:doc_templates,id'],
@@ -93,6 +95,7 @@ class DocumentController extends Controller
     public function show(int $id): JsonResponse
     {
         $document = Document::with(['template', 'creator'])->findOrFail($id);
+        $this->authorize('view', $document);
 
         return response()->json($document);
     }
@@ -123,6 +126,8 @@ class DocumentController extends Controller
     public function download(int $id, Request $request)
     {
         $document = Document::findOrFail($id);
+        $this->authorize('export', $document);
+
         $format = $request->query('format', 'docx'); // docx or pdf
 
         // TODO: get file paths from document (file_path_docx, file_path_pdf)
@@ -156,5 +161,32 @@ class DocumentController extends Controller
         return response()->json([
             'message' => 'DOCX download not implemented yet',
         ], 501);
+    }
+
+    public function approve(Request $request, int $id): JsonResponse
+    {
+        $document = Document::findOrFail($id);
+        $this->authorize('approve', $document);
+
+        // TODO: implement approval logic
+        return response()->json(['message' => 'Not implemented']);
+    }
+
+    public function reject(Request $request, int $id): JsonResponse
+    {
+        $document = Document::findOrFail($id);
+        $this->authorize('approve', $document);
+
+        // TODO: implement rejection logic
+        return response()->json(['message' => 'Not implemented']);
+    }
+
+    public function sign(Request $request, int $id): JsonResponse
+    {
+        $document = Document::findOrFail($id);
+        $this->authorize('sign', $document);
+
+        // TODO: implement signing logic
+        return response()->json(['message' => 'Not implemented']);
     }
 }

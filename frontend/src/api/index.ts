@@ -5,5 +5,5 @@ export * from './dto'
 export * from './directory'
 export * from './users'
 export * from './roles'
-export * from './documents'
+export * from './rules'
 
