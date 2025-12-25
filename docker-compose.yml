@@ -115,6 +115,23 @@ services:
       timeout: 20s
       retries: 3
 
+  # MinIO Initialization
+  minio-init:
+    build:
+      context: ./infra/scripts
+      dockerfile: minio-init/Dockerfile
+    container_name: pdo_minio_init
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      AWS_BUCKET: ${AWS_BUCKET:-laravel}
+    networks:
+      - pdo_network
+    restart: "no"
+
   # Laravel Backend
   backend:
     build:

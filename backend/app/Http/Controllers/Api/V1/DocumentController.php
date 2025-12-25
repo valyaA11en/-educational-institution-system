@@ -27,9 +27,15 @@ class DocumentController extends Controller
         }
 
         $documents = $query->orderBy('created_at', 'desc')
-            ->paginate($request->integer('per_page', 50));
+            ->paginate($request->integer('per_page', 20));
 
-        return response()->json($documents);
+        return response()->json([
+            'data' => $documents->items(),
+            'current_page' => $documents->currentPage(),
+            'per_page' => $documents->perPage(),
+            'total' => $documents->total(),
+            'last_page' => $documents->lastPage(),
+        ]);
     }
 
     public function store(Request $request): JsonResponse
@@ -117,7 +123,7 @@ class DocumentController extends Controller
         ]);
     }
 
-    public function download(int $id, Request $request): JsonResponse
+    public function download(int $id, Request $request)
     {
         $document = Document::findOrFail($id);
         $this->authorize('export', $document);
@@ -125,12 +131,36 @@ class DocumentController extends Controller
         $format = $request->query('format', 'docx'); // docx or pdf
 
         // TODO: get file paths from document (file_path_docx, file_path_pdf)
-        // For now, return placeholder
+        // For now, generate on-the-fly or return 501 if PDF not configured
+        if ($format === 'pdf') {
+            // Check if PDF conversion is available
+            $pdfPath = null; // TODO: get from document or generate
+            
+            if (!$pdfPath) {
+                return response()->json([
+                    'message' => 'PDF conversion not configured',
+                ], 501);
+            }
+            
+            // TODO: return PDF file
+            return response()->json([
+                'message' => 'PDF download not implemented yet',
+            ], 501);
+        }
+
+        // DOCX format
+        $docxPath = null; // TODO: get from document or generate
+        
+        if (!$docxPath) {
+            return response()->json([
+                'message' => 'DOCX file not found',
+            ], 404);
+        }
+
+        // TODO: return DOCX file
         return response()->json([
-            'message' => 'Download not implemented yet',
-            'document_id' => $document->id,
-            'format' => $format,
-        ]);
+            'message' => 'DOCX download not implemented yet',
+        ], 501);
     }
 
     public function approve(Request $request, int $id): JsonResponse

@@ -2,20 +2,28 @@
 
 namespace App\Http\Controllers\Api\V1;
 
+use App\Domains\Schedule\Services\ScheduleConflictService;
+use App\Domains\Schedule\Services\ScheduleSuggestService;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Schedule\ScheduleItemCreateRequest;
+use App\Http\Requests\Schedule\SuggestRoomRequest;
+use App\Http\Requests\Schedule\SuggestTeacherRequest;
 use App\Models\ScheduleItem;
 use App\Models\ScheduleVersion;
 use App\Services\AuditService;
-use App\Services\Schedule\ConflictChecker;
+use App\Services\Outbox\OutboxService;
+use Carbon\CarbonImmutable;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 class ScheduleController extends Controller
 {
     public function __construct(
-        private ConflictChecker $conflictChecker
+        private ScheduleConflictService $conflictService,
+        private ScheduleSuggestService $suggestService,
+        private OutboxService $outboxService
     ) {}
 
     public function versions(Request $request): JsonResponse
@@ -86,14 +94,15 @@ class ScheduleController extends Controller
 
         $dto = $request->toDTO();
 
-        // Check conflicts
-        $conflicts = $this->conflictChecker->checkConflicts(
+        // Detect conflicts
+        $conflicts = $this->conflictService->detectConflicts(
             $dto->date,
             $dto->timeSlotId,
-            $dto->roomId,
-            $dto->teacherUserId,
             $dto->groupId,
-            $dto->subgroupId
+            $dto->subgroupId,
+            $dto->teacherUserId,
+            $dto->roomId,
+            $dto->versionId
         );
 
         if (!empty($conflicts) && !$dto->force) {
@@ -111,22 +120,9 @@ class ScheduleController extends Controller
 
         DB::beginTransaction();
         try {
-            // Get or create draft version
-            $version = ScheduleVersion::where('status', 'draft')
-                ->where('term_id', $request->input('term_id')) // TODO: get term_id from request
-                ->first();
-
-            if (!$version) {
-                $version = ScheduleVersion::create([
-                    'term_id' => $request->input('term_id', 1), // TODO: get current term
-                    'status' => 'draft',
-                    'created_by' => auth()->id(),
-                ]);
-            }
-
             $before = null;
             $item = ScheduleItem::create([
-                'version_id' => $version->id,
+                'version_id' => $dto->versionId,
                 'date' => $dto->date->format('Y-m-d'),
                 'time_slot_id' => $dto->timeSlotId,
                 'group_id' => $dto->groupId,
@@ -141,8 +137,10 @@ class ScheduleController extends Controller
             $after = $item->toArray();
             $after['conflicts'] = $conflicts;
 
+            // Audit log
+            $action = $dto->force ? 'schedule.force_override' : 'schedule.item.created';
             AuditService::log(
-                'schedule.item.created',
+                $action,
                 'schedule_item',
                 $item->id,
                 $before,
@@ -151,9 +149,28 @@ class ScheduleController extends Controller
                 $request->ip()
             );
 
+            // Create outbox event
+            $this->outboxService->record(
+                eventType: 'schedule.changed',
+                actorUserId: auth()->id(),
+                entityType: 'schedule_item',
+                entityId: $item->id,
+                payload: [
+                    'scheduleItemId' => $item->id,
+                    'date' => $item->date->format('Y-m-d'),
+                    'timeSlotId' => $item->time_slot_id,
+                    'groupId' => $item->group_id,
+                    'subgroupId' => $item->subgroup_id,
+                    'teacherId' => $item->teacher_user_id,
+                    'roomId' => $item->room_id,
+                    'versionId' => $item->version_id,
+                ],
+                idempotencyKey: 'schedule_item_' . $item->id . '_' . Str::uuid()
+            );
+
             DB::commit();
 
-            return response()->json($item->load(['group', 'subgroup', 'subject', 'teacher', 'room']), 201);
+            return response()->json($item->load(['group', 'subgroup', 'subject', 'teacher', 'room', 'version']), 201);
         } catch (\Exception $e) {
             DB::rollBack();
             throw $e;
@@ -174,17 +191,44 @@ class ScheduleController extends Controller
         return response()->json(['message' => 'Not implemented']);
     }
 
-    public function suggest(Request $request): JsonResponse
+    public function suggestRoom(SuggestRoomRequest $request): JsonResponse
     {
-        $validated = $request->validate([
-            'date' => ['required', 'date'],
-            'time_slot_id' => ['required', 'integer'],
-            'group_id' => ['required', 'integer'],
-            'subject_id' => ['required', 'integer'],
-            'teacher_user_id' => ['required', 'integer'],
-        ]);
+        $validated = $request->validated();
 
-        // TODO: предложить варианты расписания (свободные кабинеты)
-        return response()->json(['message' => 'Not implemented']);
+        $date = CarbonImmutable::parse($validated['date']);
+        $timeSlotId = (int) $validated['time_slot_id'];
+        $versionId = isset($validated['version_id']) ? (int) $validated['version_id'] : null;
+        $required = $validated['required'] ?? null;
+
+        $rooms = $this->suggestService->suggestRooms($date, $timeSlotId, $versionId, $required);
+
+        return response()->json([
+            'data' => $rooms,
+        ]);
+    }
+
+    public function suggestTeacher(SuggestTeacherRequest $request): JsonResponse
+    {
+        $validated = $request->validated();
+
+        $date = CarbonImmutable::parse($validated['date']);
+        $timeSlotId = (int) $validated['time_slot_id'];
+        $subjectId = (int) $validated['subject_id'];
+        $groupId = (int) $validated['group_id'];
+        $subgroupId = isset($validated['subgroup_id']) ? (int) $validated['subgroup_id'] : null;
+        $versionId = isset($validated['version_id']) ? (int) $validated['version_id'] : null;
+
+        $teachers = $this->suggestService->suggestTeachers(
+            $date,
+            $timeSlotId,
+            $subjectId,
+            $groupId,
+            $subgroupId,
+            $versionId
+        );
+
+        return response()->json([
+            'data' => $teachers,
+        ]);
     }
 }

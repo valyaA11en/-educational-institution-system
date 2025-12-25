@@ -16,6 +16,7 @@ use App\Models\ScheduleVersion;
 use App\Models\Subgroup;
 use App\Models\Subject;
 use App\Models\TimeSlot;
+use App\Models\Setting;
 use App\Models\User;
 use App\Models\UserLinkParentChild;
 use Illuminate\Database\Eloquent\Model;
@@ -433,6 +434,16 @@ class DemoDataSeeder extends Seeder
                 'user_id' => $student1->id,
                 'text' => 'Спасибо! Всё понятно.',
             ]);
+
+            // Settings
+            Setting::firstOrCreate(
+                ['key' => 'journal.monthly.avg2.threshold_percent'],
+                ['value_json' => ['value' => 30]]
+            );
+            Setting::firstOrCreate(
+                ['key' => 'journal.monthly.avg2.enabled'],
+                ['value_json' => ['value' => true]]
+            );
         });
     }
 }

@@ -11,7 +11,11 @@ RUN apk add --no-cache \
     postgresql-dev \
     oniguruma-dev \
     nodejs \
-    npm
+    npm \
+    libxml2-dev \
+    libxslt-dev \
+    libreoffice-writer \
+    libreoffice
 
 # Install PHP extensions
 RUN docker-php-ext-install \
@@ -22,7 +26,10 @@ RUN docker-php-ext-install \
     pcntl \
     bcmath \
     gd \
-    zip
+    zip \
+    xml \
+    xsl \
+    soap
 
 # Install Redis extension
 RUN apk add --no-cache pcre-dev $PHPIZE_DEPS \

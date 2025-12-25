@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\Admin\Directory\SubgroupsController as AdminSubgrou
 use App\Http\Controllers\Api\Admin\Directory\TimeSlotsController as AdminTimeSlotsController;
 use App\Http\Controllers\Api\Admin\ImportUsersController;
 use App\Http\Controllers\Api\Admin\RolesController;
+use App\Http\Controllers\Api\Admin\SettingsController;
 use App\Http\Controllers\Api\Admin\UsersController;
 use App\Http\Controllers\Api\V1\AnalyticsController;
 use App\Http\Controllers\Api\V1\AssignmentController;
@@ -95,7 +96,8 @@ Route::prefix('v1')->group(function (): void {
             Route::post('items', [ScheduleController::class, 'createItem'])->middleware('can:schedule.create');
             Route::get('replacements', [ScheduleController::class, 'replacements']);
             Route::post('replacements', [ScheduleController::class, 'createReplacement'])->middleware('can:schedule.replace');
-            Route::post('suggest', [ScheduleController::class, 'suggest'])->middleware('can:schedule.create');
+            Route::post('suggest-room', [ScheduleController::class, 'suggestRoom'])->middleware('can:schedule.create');
+            Route::post('suggest-teacher', [ScheduleController::class, 'suggestTeacher'])->middleware('can:schedule.create');
         });
 
         // Journal
@@ -224,6 +226,12 @@ Route::prefix('v1')->group(function (): void {
         // Admin Import
         Route::prefix('admin/import')->middleware('can:users.create')->group(function (): void {
             Route::post('users-xlsx', [ImportUsersController::class, 'importUsersXlsx']);
+        });
+
+        // Admin Settings
+        Route::prefix('admin/settings')->middleware('can:analytics.view')->group(function (): void {
+            Route::get('/', [SettingsController::class, 'index']);
+            Route::post('/', [SettingsController::class, 'store'])->middleware('can:directory.manage');
         });
 
         // Admin Directory CRUD (only directory.manage permission)
