@@ -12,8 +12,24 @@ class MaterialController extends Controller
     public function index(Request $request): JsonResponse
     {
         $this->authorize('viewAny', Material::class);
-        // TODO: получить список материалов
-        return response()->json(['message' => 'Not implemented']);
+
+        $query = Material::with(['subject', 'creator', 'targets']);
+
+        if ($subjectId = $request->query('subject_id')) {
+            $query->where('subject_id', $subjectId);
+        }
+
+        if ($groupId = $request->query('group_id')) {
+            $query->whereHas('targets', function ($q) use ($groupId) {
+                $q->where('group_id', $groupId);
+            });
+        }
+
+        // VisibleToUserScope is applied automatically via global scope
+        $materials = $query->orderBy('created_at', 'desc')
+            ->paginate($request->integer('per_page', 20));
+
+        return response()->json($materials);
     }
 
     public function store(Request $request): JsonResponse
@@ -27,10 +43,11 @@ class MaterialController extends Controller
 
     public function show(Request $request, int $id): JsonResponse
     {
-        $material = Material::findOrFail($id);
+        // VisibleToUserScope is applied automatically - will return 404 if not visible
+        $material = Material::with(['subject', 'creator', 'targets'])->findOrFail($id);
         $this->authorize('view', $material);
-        // TODO: получить материал
-        return response()->json(['message' => 'Not implemented']);
+
+        return response()->json($material);
     }
 
     public function update(Request $request, int $id): JsonResponse

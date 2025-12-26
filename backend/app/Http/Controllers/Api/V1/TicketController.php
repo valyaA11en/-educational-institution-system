@@ -66,10 +66,22 @@ class TicketController extends Controller
             'category' => ['required', 'string'],
             'priority' => ['required', 'in:low,normal,medium,high,critical'],
             'assigned_to' => ['sometimes', 'nullable', 'integer', 'exists:users,id'],
+            'attachments' => ['sometimes', 'array'],
+            'attachments.*' => ['integer', 'exists:files,id'],
         ]);
 
         DB::beginTransaction();
         try {
+            $now = now();
+            $slaHours = 72; // Default SLA hours
+            
+            // Calculate first_response_due_at = now + min(24h, sla_hours/3)
+            $firstResponseHours = min(24, $slaHours / 3);
+            $firstResponseDueAt = $now->copy()->addHours($firstResponseHours);
+            
+            // Calculate resolution_due_at = now + sla_hours
+            $resolutionDueAt = $now->copy()->addHours($slaHours);
+
             $ticket = Ticket::create([
                 'title' => $validated['title'],
                 'description' => $validated['description'],
@@ -78,9 +90,13 @@ class TicketController extends Controller
                 'status' => 'open',
                 'created_by' => auth()->id(),
                 'assigned_to' => $validated['assigned_to'] ?? null,
+                'sla_hours' => $slaHours,
+                'first_response_due_at' => $firstResponseDueAt,
+                'resolution_due_at' => $resolutionDueAt,
+                'is_overdue' => false,
             ]);
 
-            // Apply SLA configuration
+            // Apply SLA configuration (for backward compatibility with existing SLA fields)
             $this->slaService->applySlaToTicket($ticket);
             $ticket->refresh();
 
@@ -141,6 +157,16 @@ class TicketController extends Controller
         try {
             // Handle status change
             if (isset($validated['status'])) {
+                // Set first_response_at when status changes to in_progress (if not already set)
+                if ($validated['status'] === 'in_progress' && !$ticket->first_response_at) {
+                    $validated['first_response_at'] = now();
+                }
+                
+                // Set resolved_at when status changes to resolved or closed (if not already set)
+                if (in_array($validated['status'], ['resolved', 'closed']) && !$ticket->resolved_at) {
+                    $validated['resolved_at'] = now();
+                }
+                
                 if ($validated['status'] === 'closed' && !$ticket->closed_at) {
                     $validated['closed_at'] = now();
                     $this->slaService->markResolution($ticket);

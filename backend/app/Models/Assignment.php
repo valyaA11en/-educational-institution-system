@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Models\Scopes\VisibleToUserScope;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -29,6 +30,11 @@ class Assignment extends Model
             'due_at' => 'datetime',
             'allowed_types' => 'array',
         ];
+    }
+
+    protected static function booted(): void
+    {
+        static::addGlobalScope(new VisibleToUserScope());
     }
 
     public function subject(): BelongsTo

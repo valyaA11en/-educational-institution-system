@@ -4,19 +4,34 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
 use App\Models\Document;
+use App\Models\DocTemplate;
 use App\Services\Document\DocumentService;
+use App\Services\Document\DocumentWorkflowService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class DocumentController extends Controller
 {
     public function __construct(
-        private DocumentService $documentService
+        private DocumentService $documentService,
+        private DocumentWorkflowService $workflowService
     ) {}
+
+    public function templates(Request $request): JsonResponse
+    {
+        $templates = DocTemplate::query();
+
+        if ($type = $request->query('type')) {
+            $templates->where('type', $type);
+        }
+
+        return response()->json($templates->get());
+    }
 
     public function index(Request $request): JsonResponse
     {
-        $query = Document::with(['template', 'creator']);
+        $query = Document::with(['template', 'creator', 'signer']);
 
         if ($type = $request->query('type')) {
             $query->where('type', $type);
@@ -24,6 +39,18 @@ class DocumentController extends Controller
 
         if ($status = $request->query('status')) {
             $query->where('status', $status);
+        }
+
+        if ($dateFrom = $request->query('dateFrom')) {
+            $query->where('date', '>=', $dateFrom);
+        }
+
+        if ($dateTo = $request->query('dateTo')) {
+            $query->where('date', '<=', $dateTo);
+        }
+
+        if ($search = $request->query('search')) {
+            $query->where('number', 'like', "%{$search}%");
         }
 
         $documents = $query->orderBy('created_at', 'desc')
@@ -49,35 +76,9 @@ class DocumentController extends Controller
             'term_id' => ['sometimes', 'integer', 'exists:terms,id'],
         ]);
 
-        // Get next number from registry
-        $registry = \DB::table('document_registry')
-            ->where('type', $validated['type'])
-            ->where('year', now()->year)
-            ->lockForUpdate()
-            ->first();
-
-        if (!$registry) {
-            $registryId = \DB::table('document_registry')->insertGetId([
-                'type' => $validated['type'],
-                'year' => now()->year,
-                'last_number' => 0,
-                'updated_at' => now(),
-            ]);
-            $lastNumber = 0;
-            $registry = (object) ['id' => $registryId];
-        } else {
-            $lastNumber = $registry->last_number;
-        }
-
-        $nextNumber = $lastNumber + 1;
-
-        \DB::table('document_registry')
-            ->where('id', $registry->id)
-            ->update(['last_number' => $nextNumber]);
-
         $document = Document::create([
             'type' => $validated['type'],
-            'number' => (string) $nextNumber,
+            'number' => '', // Will be assigned on registration
             'date' => now()->toDateString(),
             'status' => 'draft',
             'template_id' => $validated['template_id'],
@@ -94,10 +95,143 @@ class DocumentController extends Controller
 
     public function show(int $id): JsonResponse
     {
-        $document = Document::with(['template', 'creator'])->findOrFail($id);
+        $document = Document::with([
+            'template',
+            'creator',
+            'signer',
+            'routes.approverRole',
+            'routes.approverUser',
+            'acks.user'
+        ])->findOrFail($id);
         $this->authorize('view', $document);
 
         return response()->json($document);
+    }
+
+    public function update(Request $request, int $id): JsonResponse
+    {
+        $document = Document::findOrFail($id);
+        $this->authorize('update', $document);
+
+        if ($document->status !== 'draft') {
+            return response()->json([
+                'message' => 'Only draft documents can be updated',
+            ], 422);
+        }
+
+        $validated = $request->validate([
+            'data_json' => ['required', 'array'],
+        ]);
+
+        $document->update([
+            'data_json' => $validated['data_json'],
+        ]);
+
+        return response()->json($document->load(['template', 'creator']));
+    }
+
+    public function sendToApproval(Request $request, int $id): JsonResponse
+    {
+        $document = Document::findOrFail($id);
+        $this->authorize('approve', $document);
+
+        $validated = $request->validate([
+            'route' => ['required', 'array', 'min:1'],
+            'route.*.stepNo' => ['required', 'integer', 'min:1'],
+            'route.*.approverRoleId' => ['sometimes', 'nullable', 'integer', 'exists:roles,id'],
+            'route.*.approverUserId' => ['sometimes', 'nullable', 'integer', 'exists:users,id'],
+        ]);
+
+        $this->workflowService->sendToApproval($document, $validated['route']);
+
+        return response()->json($document->load(['routes', 'template', 'creator']));
+    }
+
+    public function approve(Request $request, int $id): JsonResponse
+    {
+        $document = Document::findOrFail($id);
+        $this->authorize('approve', $document);
+
+        $validated = $request->validate([
+            'comment' => ['sometimes', 'nullable', 'string'],
+        ]);
+
+        $this->workflowService->approveStep($document, $validated['comment'] ?? null);
+
+        return response()->json($document->load(['routes', 'template', 'creator', 'signer']));
+    }
+
+    public function reject(Request $request, int $id): JsonResponse
+    {
+        $document = Document::findOrFail($id);
+        $this->authorize('approve', $document);
+
+        $validated = $request->validate([
+            'comment' => ['required', 'string'],
+        ]);
+
+        $this->workflowService->rejectStep($document, $validated['comment']);
+
+        return response()->json($document->load(['routes', 'template', 'creator']));
+    }
+
+    public function sign(Request $request, int $id): JsonResponse
+    {
+        $document = Document::findOrFail($id);
+        $this->authorize('sign', $document);
+
+        $validated = $request->validate([
+            'comment' => ['sometimes', 'nullable', 'string'],
+        ]);
+
+        $this->workflowService->sign($document, $validated['comment'] ?? null);
+
+        return response()->json($document->load(['routes', 'template', 'creator', 'signer']));
+    }
+
+    public function setAckTargets(Request $request, int $id): JsonResponse
+    {
+        $document = Document::findOrFail($id);
+        $this->authorize('view', $document);
+
+        $validated = $request->validate([
+            'userIds' => ['required', 'array', 'min:1'],
+            'userIds.*' => ['integer', 'exists:users,id'],
+        ]);
+
+        $this->workflowService->setAckTargets($document, $validated['userIds']);
+
+        return response()->json(['message' => 'Acknowledgment targets set']);
+    }
+
+    public function confirmAck(Request $request, int $id): JsonResponse
+    {
+        $document = Document::findOrFail($id);
+        $this->authorize('view', $document);
+
+        $this->workflowService->confirmAck($document, auth()->id());
+
+        return response()->json(['message' => 'Acknowledged']);
+    }
+
+    public function getAck(Request $request, int $id): JsonResponse
+    {
+        $document = Document::findOrFail($id);
+        $this->authorize('view', $document);
+
+        $acks = $document->acks()->with('user')->get();
+
+        return response()->json(['data' => $acks]);
+    }
+
+    public function registerNumber(Request $request, int $id): JsonResponse
+    {
+        $document = Document::findOrFail($id);
+        $this->authorize('viewAny', Document::class); // Only admin/registry
+
+        $this->workflowService->registerNumber($document);
+
+        return response()->json($document->load(['template', 'creator']));
     }
 
     public function verify(string $hash): JsonResponse
@@ -161,32 +295,5 @@ class DocumentController extends Controller
         return response()->json([
             'message' => 'DOCX download not implemented yet',
         ], 501);
-    }
-
-    public function approve(Request $request, int $id): JsonResponse
-    {
-        $document = Document::findOrFail($id);
-        $this->authorize('approve', $document);
-
-        // TODO: implement approval logic
-        return response()->json(['message' => 'Not implemented']);
-    }
-
-    public function reject(Request $request, int $id): JsonResponse
-    {
-        $document = Document::findOrFail($id);
-        $this->authorize('approve', $document);
-
-        // TODO: implement rejection logic
-        return response()->json(['message' => 'Not implemented']);
-    }
-
-    public function sign(Request $request, int $id): JsonResponse
-    {
-        $document = Document::findOrFail($id);
-        $this->authorize('sign', $document);
-
-        // TODO: implement signing logic
-        return response()->json(['message' => 'Not implemented']);
     }
 }

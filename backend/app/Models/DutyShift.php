@@ -48,3 +48,4 @@ class DutyShift extends Model
     }
 }
 
+

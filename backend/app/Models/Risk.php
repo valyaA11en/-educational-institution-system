@@ -13,37 +13,30 @@ class Risk extends Model
     use HasFactory;
 
     protected $fillable = [
-        'entity_type',
-        'entity_id',
-        'risk_level',
-        'risk_score',
-        'factors',
-        'metadata',
+        'user_id',
         'term_id',
-        'calculated_by',
+        'risk_type',
+        'level',
+        'score',
+        'details_json',
         'calculated_at',
-        'resolved_at',
-        'resolution_notes',
-        'resolved_by',
     ];
 
     protected function casts(): array
     {
         return [
-            'risk_score' => 'decimal:2',
-            'factors' => 'array',
-            'metadata' => 'array',
+            'score' => 'decimal:2',
+            'details_json' => 'array',
             'calculated_at' => 'datetime',
-            'resolved_at' => 'datetime',
         ];
     }
 
     /**
-     * Get the entity that has the risk (polymorphic)
+     * Get the student user
      */
-    public function entity(): MorphTo
+    public function user(): BelongsTo
     {
-        return $this->morphTo();
+        return $this->belongsTo(User::class, 'user_id');
     }
 
     /**
@@ -58,76 +51,35 @@ class Risk extends Model
     }
 
     /**
-     * Get user who calculated the risk
-     */
-    public function calculator(): BelongsTo
-    {
-        return $this->belongsTo(User::class, 'calculated_by');
-    }
-
-    /**
-     * Get user who resolved the risk
-     */
-    public function resolver(): BelongsTo
-    {
-        return $this->belongsTo(User::class, 'resolved_by');
-    }
-
-    /**
-     * Check if risk is resolved
-     */
-    public function isResolved(): bool
-    {
-        return $this->resolved_at !== null;
-    }
-
-    /**
-     * Check if risk is active
-     */
-    public function isActive(): bool
-    {
-        return !$this->isResolved() && $this->risk_level !== 'none';
-    }
-
-    /**
-     * Scope for active risks
-     */
-    public function scopeActive($query)
-    {
-        return $query->whereNull('resolved_at')
-            ->where('risk_level', '!=', 'none');
-    }
-
-    /**
-     * Scope for resolved risks
-     */
-    public function scopeResolved($query)
-    {
-        return $query->whereNotNull('resolved_at');
-    }
-
-    /**
      * Scope by risk level
      */
     public function scopeByLevel($query, string $level)
     {
-        return $query->where('risk_level', $level);
+        return $query->where('level', $level);
     }
 
     /**
-     * Scope by entity type
+     * Scope by risk type
      */
-    public function scopeByEntityType($query, string $entityType)
+    public function scopeByRiskType($query, string $riskType)
     {
-        return $query->where('entity_type', $entityType);
+        return $query->where('risk_type', $riskType);
     }
 
     /**
-     * Scope for high priority risks
+     * Scope for high priority risks (red level)
      */
     public function scopeHighPriority($query)
     {
-        return $query->whereIn('risk_level', ['high', 'critical']);
+        return $query->where('level', 'red');
+    }
+
+    /**
+     * Scope for active risks (not green)
+     */
+    public function scopeActive($query)
+    {
+        return $query->where('level', '!=', 'green');
     }
 }
 

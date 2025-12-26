@@ -29,6 +29,12 @@ class Ticket extends Model
         'sla_reminder_sent_at',
         'escalation_rules',
         'closed_at',
+        'sla_hours',
+        'first_response_due_at',
+        'resolution_due_at',
+        'first_response_at',
+        'resolved_at',
+        'is_overdue',
     ];
 
     protected function casts(): array
@@ -43,6 +49,12 @@ class Ticket extends Model
             'sla_reminder_sent_at' => 'datetime',
             'closed_at' => 'datetime',
             'escalation_rules' => 'array',
+            'sla_hours' => 'integer',
+            'first_response_due_at' => 'datetime',
+            'resolution_due_at' => 'datetime',
+            'first_response_at' => 'datetime',
+            'resolved_at' => 'datetime',
+            'is_overdue' => 'boolean',
         ];
     }
 

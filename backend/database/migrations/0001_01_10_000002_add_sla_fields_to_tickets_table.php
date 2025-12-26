@@ -12,16 +12,16 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('tickets', function (Blueprint $table) {
-            $table->string('sla_level')->nullable()->after('priority'); // bronze, silver, gold, platinum
-            $table->integer('response_time_minutes')->nullable()->after('sla_level'); // Время ответа в минутах
-            $table->integer('resolution_time_minutes')->nullable()->after('response_time_minutes'); // Время решения в минутах
-            $table->timestamp('sla_response_due_at')->nullable()->after('sla_due_at'); // Дедлайн для первого ответа
-            $table->timestamp('sla_first_response_at')->nullable()->after('sla_response_due_at'); // Время первого ответа
-            $table->jsonb('escalation_rules')->nullable()->after('sla_reminder_sent_at'); // Правила эскалации
-            
-            $table->index('sla_level');
-            $table->index('sla_response_due_at');
-            $table->index(['status', 'sla_response_due_at']);
+            $table->integer('sla_hours')->default(72)->after('priority');
+            $table->timestamp('first_response_due_at')->nullable()->after('sla_hours');
+            $table->timestamp('resolution_due_at')->nullable()->after('first_response_due_at');
+            $table->timestamp('first_response_at')->nullable()->after('resolution_due_at');
+            $table->timestamp('resolved_at')->nullable()->after('first_response_at');
+            $table->boolean('is_overdue')->default(false)->after('resolved_at');
+
+            $table->index(['is_overdue', 'status']);
+            $table->index('resolution_due_at');
+            $table->index('first_response_due_at');
         });
     }
 
@@ -31,15 +31,18 @@ return new class extends Migration
     public function down(): void
     {
         Schema::table('tickets', function (Blueprint $table) {
+            $table->dropIndex(['is_overdue', 'status']);
+            $table->dropIndex(['resolution_due_at']);
+            $table->dropIndex(['first_response_due_at']);
+            
             $table->dropColumn([
-                'sla_level',
-                'response_time_minutes',
-                'resolution_time_minutes',
-                'sla_response_due_at',
-                'sla_first_response_at',
-                'escalation_rules',
+                'sla_hours',
+                'first_response_due_at',
+                'resolution_due_at',
+                'first_response_at',
+                'resolved_at',
+                'is_overdue',
             ]);
         });
     }
 };
-

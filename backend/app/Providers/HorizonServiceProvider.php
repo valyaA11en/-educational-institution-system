@@ -28,3 +28,4 @@ class HorizonServiceProvider extends ServiceProvider
     }
 }
 
+

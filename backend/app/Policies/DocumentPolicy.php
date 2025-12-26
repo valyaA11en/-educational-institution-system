@@ -63,7 +63,18 @@ class DocumentPolicy extends BasePolicy
 
     public function update(User $user, Document $document): bool
     {
-        return $user->id === $document->created_by;
+        // Only draft documents can be updated
+        if ($document->status !== 'draft') {
+            return false;
+        }
+
+        // Creator can update their draft
+        if ($document->created_by === $user->id) {
+            return true;
+        }
+
+        // Admin can update
+        return $user->hasPermission('documents.manage');
     }
 
     public function approve(User $user, Document $document): bool
@@ -72,21 +83,25 @@ class DocumentPolicy extends BasePolicy
         $currentStep = DB::table('document_routes')
             ->where('document_id', $document->id)
             ->where('status', 'pending')
-            ->orderBy('step_order')
+            ->orderBy('step_no')
             ->first();
 
         if (!$currentStep) {
             return false;
         }
 
-        $stepData = json_decode($currentStep->step_data_json, true);
-
-        if (isset($stepData['user_id']) && $stepData['user_id'] === $user->id) {
+        if ($currentStep->approver_user_id && $currentStep->approver_user_id === $user->id) {
             return true;
         }
 
-        if (isset($stepData['role']) && $this->userHasRole($user, $stepData['role'])) {
-            return true;
+        if ($currentStep->approver_role_id) {
+            $userRoleIds = DB::table('user_roles')
+                ->where('user_id', $user->id)
+                ->pluck('role_id')
+                ->toArray();
+            if (in_array($currentStep->approver_role_id, $userRoleIds)) {
+                return true;
+            }
         }
 
         return false;

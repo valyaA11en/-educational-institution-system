@@ -1,10 +1,72 @@
 <template>
   <div>
     <v-card>
-      <v-card-title>
+      <v-card-title class="d-flex justify-space-between align-center">
         <span class="text-h5">Документы</span>
+        <v-btn
+          color="primary"
+          prepend-icon="mdi-plus"
+          @click="$router.push({ name: 'document-new' })"
+        >
+          Создать документ
+        </v-btn>
       </v-card-title>
       <v-card-text>
+        <v-row class="mb-3">
+          <v-col cols="12" md="3">
+            <v-text-field
+              v-model="filters.search"
+              label="Поиск по номеру"
+              variant="outlined"
+              density="compact"
+              clearable
+              @update:model-value="loadDocuments"
+            />
+          </v-col>
+          <v-col cols="12" md="2">
+            <v-select
+              v-model="filters.type"
+              :items="typeOptions"
+              label="Тип"
+              clearable
+              variant="outlined"
+              density="compact"
+              @update:model-value="loadDocuments"
+            />
+          </v-col>
+          <v-col cols="12" md="2">
+            <v-select
+              v-model="filters.status"
+              :items="statusOptions"
+              label="Статус"
+              clearable
+              variant="outlined"
+              density="compact"
+              @update:model-value="loadDocuments"
+            />
+          </v-col>
+          <v-col cols="12" md="2">
+            <v-text-field
+              v-model="filters.dateFrom"
+              label="Дата от"
+              type="date"
+              variant="outlined"
+              density="compact"
+              @update:model-value="loadDocuments"
+            />
+          </v-col>
+          <v-col cols="12" md="2">
+            <v-text-field
+              v-model="filters.dateTo"
+              label="Дата до"
+              type="date"
+              variant="outlined"
+              density="compact"
+              @update:model-value="loadDocuments"
+            />
+          </v-col>
+        </v-row>
+
         <v-data-table
           :headers="headers"
           :items="documents"
@@ -13,8 +75,10 @@
           :page="pagination.current_page"
           :server-items-length="pagination.total"
           @update:page="onPageChange"
-          @update:items-per-page="onItemsPerPageChange"
         >
+          <template v-slot:item.number="{ item }">
+            {{ item.number || '-' }}
+          </template>
           <template v-slot:item.status="{ item }">
             <v-chip :color="getStatusColor(item.status)" size="small">
               {{ getStatusText(item.status) }}
@@ -22,6 +86,9 @@
           </template>
           <template v-slot:item.date="{ item }">
             {{ formatDate(item.date) }}
+          </template>
+          <template v-slot:item.creator="{ item }">
+            {{ item.creator?.fio || `ID: ${item.created_by}` }}
           </template>
           <template v-slot:item.actions="{ item }">
             <v-btn
@@ -50,21 +117,54 @@ const pagination = ref({
   last_page: 1,
 })
 
+const filters = ref({
+  search: null as string | null,
+  type: null as string | null,
+  status: null as string | null,
+  dateFrom: null as string | null,
+  dateTo: null as string | null,
+})
+
+const typeOptions = [
+  { title: 'Приказ', value: 'order' },
+  { title: 'Решение', value: 'decision' },
+  { title: 'Служебная записка', value: 'memo' },
+  { title: 'Протокол', value: 'protocol' },
+  { title: 'Заявление', value: 'statement' },
+  { title: 'Ведомость', value: 'grade_sheet' },
+]
+
+const statusOptions = [
+  { title: 'Черновик', value: 'draft' },
+  { title: 'На проверке', value: 'on_review' },
+  { title: 'Утвержден', value: 'approved' },
+  { title: 'Подписан', value: 'signed' },
+  { title: 'Архив', value: 'archived' },
+]
+
 const headers = [
   { title: 'Номер', key: 'number', sortable: true },
   { title: 'Тип', key: 'type', sortable: true },
   { title: 'Статус', key: 'status', sortable: true },
   { title: 'Дата', key: 'date', sortable: true },
+  { title: 'Создатель', key: 'creator', sortable: false },
   { title: 'Действия', key: 'actions', sortable: false, width: '100px' },
 ]
 
 const loadDocuments = async () => {
   loading.value = true
   try {
-    const response: DocumentListResponse = await documentsApi.list({
+    const params: any = {
       page: pagination.value.current_page,
       per_page: pagination.value.per_page,
-    })
+    }
+    if (filters.value.search) params.search = filters.value.search
+    if (filters.value.type) params.type = filters.value.type
+    if (filters.value.status) params.status = filters.value.status
+    if (filters.value.dateFrom) params.dateFrom = filters.value.dateFrom
+    if (filters.value.dateTo) params.dateTo = filters.value.dateTo
+
+    const response: DocumentListResponse = await documentsApi.list(params)
     documents.value = response.data
     pagination.value = {
       current_page: response.current_page,
@@ -81,12 +181,6 @@ const loadDocuments = async () => {
 
 const onPageChange = (page: number) => {
   pagination.value.current_page = page
-  loadDocuments()
-}
-
-const onItemsPerPageChange = (itemsPerPage: number) => {
-  pagination.value.per_page = itemsPerPage
-  pagination.value.current_page = 1
   loadDocuments()
 }
 
@@ -120,4 +214,3 @@ onMounted(() => {
   loadDocuments()
 })
 </script>
-

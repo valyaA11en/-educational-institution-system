@@ -18,6 +18,8 @@ class DatabaseSeeder extends Seeder
             RolesAndPermissionsSeeder::class,
             DirectoryDemoSeeder::class,
             DemoDataSeeder::class,
+            DefaultRulesSeeder::class,
+            CertificateTemplateSeeder::class,
         ]);
     }
 }

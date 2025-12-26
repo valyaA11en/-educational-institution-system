@@ -18,3 +18,4 @@ class TimeSlot extends Model
 }
 
 
+

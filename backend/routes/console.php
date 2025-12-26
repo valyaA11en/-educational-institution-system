@@ -14,5 +14,11 @@ Schedule::job(new \App\Jobs\DispatchOutboxEvents(100))->everyMinute();
 // Check low grades notifications (last day of month)
 Schedule::command('notifications:check-low-grades')->monthlyOn(1, '00:00');
 
-// Check ticket SLA (every hour)
-Schedule::command('tickets:check-sla')->hourly();
+// Check ticket SLA (every 10 minutes)
+Schedule::command('tickets:check-sla')->everyTenMinutes();
+
+// Recalculate risks (daily at 02:00)
+Schedule::command('analytics:recalc-risks')->dailyAt('02:00');
+
+// Exam reminders (every 6 hours)
+Schedule::command('exams:remind')->everySixHours();

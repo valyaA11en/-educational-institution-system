@@ -12,8 +12,24 @@ class AssignmentController extends Controller
     public function index(Request $request): JsonResponse
     {
         $this->authorize('viewAny', Assignment::class);
-        // TODO: получить список заданий
-        return response()->json(['message' => 'Not implemented']);
+
+        $query = Assignment::with(['subject', 'teacher', 'targets']);
+
+        if ($subjectId = $request->query('subject_id')) {
+            $query->where('subject_id', $subjectId);
+        }
+
+        if ($groupId = $request->query('group_id')) {
+            $query->whereHas('targets', function ($q) use ($groupId) {
+                $q->where('group_id', $groupId);
+            });
+        }
+
+        // VisibleToUserScope is applied automatically via global scope
+        $assignments = $query->orderBy('created_at', 'desc')
+            ->paginate($request->integer('per_page', 20));
+
+        return response()->json($assignments);
     }
 
     public function store(Request $request): JsonResponse
@@ -27,10 +43,11 @@ class AssignmentController extends Controller
 
     public function show(Request $request, int $id): JsonResponse
     {
-        $assignment = Assignment::findOrFail($id);
+        // VisibleToUserScope is applied automatically - will return 404 if not visible
+        $assignment = Assignment::with(['subject', 'teacher', 'targets'])->findOrFail($id);
         $this->authorize('view', $assignment);
-        // TODO: получить задание
-        return response()->json(['message' => 'Not implemented']);
+
+        return response()->json($assignment);
     }
 
     public function update(Request $request, int $id): JsonResponse

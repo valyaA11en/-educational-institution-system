@@ -4,18 +4,28 @@ namespace App\Providers;
 
 use App\Models\Assignment;
 use App\Models\ChatThread;
+use App\Models\CurriculumPlan;
 use App\Models\Document;
+use App\Models\DocTemplate;
 use App\Models\File;
 use App\Models\Grade;
 use App\Models\Material;
+use App\Models\Contest;
+use App\Models\Exam;
+use App\Models\Risk;
 use App\Models\ScheduleItem;
 use App\Models\Ticket;
 use App\Policies\AssignmentPolicy;
 use App\Policies\ChatThreadPolicy;
+use App\Policies\ContestPolicy;
 use App\Policies\DocumentPolicy;
+use App\Policies\DocTemplatePolicy;
+use App\Policies\ExamPolicy;
 use App\Policies\FilePolicy;
 use App\Policies\GradePolicy;
+use App\Policies\KtpPlanPolicy;
 use App\Policies\MaterialPolicy;
+use App\Policies\RiskPolicy;
 use App\Policies\ScheduleItemPolicy;
 use App\Policies\TicketPolicy;
 use Illuminate\Foundation\Support\Providers\AuthServiceProvider as ServiceProvider;
@@ -25,14 +35,20 @@ use Illuminate\Support\Facades\Schema;
 class AppServiceProvider extends ServiceProvider
 {
     protected $policies = [
+        \App\Models\Exam::class => \App\Policies\ExamPolicy::class,
         Assignment::class => AssignmentPolicy::class,
         ScheduleItem::class => ScheduleItemPolicy::class,
         Material::class => MaterialPolicy::class,
         Document::class => DocumentPolicy::class,
+        DocTemplate::class => DocTemplatePolicy::class,
         File::class => FilePolicy::class,
         ChatThread::class => ChatThreadPolicy::class,
         Ticket::class => TicketPolicy::class,
         Grade::class => GradePolicy::class,
+        Risk::class => RiskPolicy::class,
+        CurriculumPlan::class => KtpPlanPolicy::class,
+        Exam::class => ExamPolicy::class,
+        Contest::class => ContestPolicy::class,
     ];
 
     /**

@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Models\Scopes\VisibleToUserScope;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -18,6 +19,11 @@ class Material extends Model
         'visibility_scope',
         'created_by',
     ];
+
+    protected static function booted(): void
+    {
+        static::addGlobalScope(new VisibleToUserScope());
+    }
 
     public function subject(): BelongsTo
     {

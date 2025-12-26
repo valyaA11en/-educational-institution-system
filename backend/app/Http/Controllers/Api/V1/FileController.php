@@ -19,43 +19,67 @@ class FileController extends Controller
         $this->authorize('presign', File::class);
 
         $validated = $request->validate([
-            'assignment_id' => ['required', 'integer', 'exists:assignments,id'],
+            'assignment_id' => ['sometimes', 'nullable', 'integer', 'exists:assignments,id'],
+            'ticket_id' => ['sometimes', 'nullable', 'integer', 'exists:tickets,id'],
             'filename' => ['required', 'string', 'max:255'],
             'size' => ['required', 'integer', 'min:1'],
             'mime' => ['required', 'string'],
         ]);
 
-        $assignment = Assignment::findOrFail($validated['assignment_id']);
-
-        // Validate file size
-        if ($assignment->max_file_size && $validated['size'] > $assignment->max_file_size) {
+        // At least one of assignment_id or ticket_id must be provided
+        if (empty($validated['assignment_id']) && empty($validated['ticket_id'])) {
             return response()->json([
-                'message' => "Размер файла превышает максимально допустимый: " . $this->formatBytes($assignment->max_file_size),
+                'message' => 'Either assignment_id or ticket_id must be provided',
             ], 422);
         }
 
-        // Validate file type
-        if ($assignment->allowed_types && !empty($assignment->allowed_types)) {
-            $extension = strtolower(pathinfo($validated['filename'], PATHINFO_EXTENSION));
-            $mimeType = $validated['mime'];
+        $maxFileSize = 10485760; // Default 10MB
+        $allowedTypes = null;
 
-            $allowed = false;
-            foreach ($assignment->allowed_types as $allowedType) {
-                if ($extension === strtolower($allowedType) || $mimeType === $allowedType) {
-                    $allowed = true;
-                    break;
+        // If assignment_id is provided, validate against assignment constraints
+        if (!empty($validated['assignment_id'])) {
+            $assignment = Assignment::findOrFail($validated['assignment_id']);
+
+            // Validate file size
+            if ($assignment->max_file_size && $validated['size'] > $assignment->max_file_size) {
+                return response()->json([
+                    'message' => "Размер файла превышает максимально допустимый: " . $this->formatBytes($assignment->max_file_size),
+                ], 422);
+            }
+
+            // Validate file type
+            if ($assignment->allowed_types && !empty($assignment->allowed_types)) {
+                $extension = strtolower(pathinfo($validated['filename'], PATHINFO_EXTENSION));
+                $mimeType = $validated['mime'];
+
+                $allowed = false;
+                foreach ($assignment->allowed_types as $allowedType) {
+                    if ($extension === strtolower($allowedType) || $mimeType === $allowedType) {
+                        $allowed = true;
+                        break;
+                    }
+                }
+
+                if (!$allowed) {
+                    return response()->json([
+                        'message' => "Тип файла не разрешен. Разрешенные типы: " . implode(', ', $assignment->allowed_types),
+                    ], 422);
                 }
             }
 
-            if (!$allowed) {
+            // Generate unique file path for assignment
+            $path = 'assignments/' . $assignment->id . '/' . Str::uuid() . '/' . $validated['filename'];
+        } else {
+            // For tickets, use default constraints
+            if ($validated['size'] > $maxFileSize) {
                 return response()->json([
-                    'message' => "Тип файла не разрешен. Разрешенные типы: " . implode(', ', $assignment->allowed_types),
+                    'message' => "Размер файла превышает максимально допустимый: " . $this->formatBytes($maxFileSize),
                 ], 422);
             }
-        }
 
-        // Generate unique file path
-        $path = 'assignments/' . $assignment->id . '/' . Str::uuid() . '/' . $validated['filename'];
+            // Generate unique file path for ticket
+            $path = 'tickets/' . $validated['ticket_id'] . '/' . Str::uuid() . '/' . $validated['filename'];
+        }
 
         // Generate presigned URL for upload (valid for 1 hour)
         $s3Client = new S3Client([
@@ -109,7 +133,12 @@ class FileController extends Controller
         // TODO: add status field to files table if needed
 
         return response()->json([
-            'file' => $file,
+            'id' => $file->id,
+            'filename' => $file->original_name,
+            'size' => $file->size,
+            'content_type' => $file->mime,
+            'file_path' => $file->storage_key,
+            'created_at' => $file->created_at?->toIso8601String(),
             'download_url' => Storage::disk('s3')->temporaryUrl($file->storage_key, now()->addHours(24)),
         ]);
     }

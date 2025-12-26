@@ -12,6 +12,7 @@ use App\Models\ScheduleItem;
 use App\Models\ScheduleVersion;
 use App\Services\AuditService;
 use App\Services\Outbox\OutboxService;
+use App\Services\Schedule\ScheduleVersionService;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -23,13 +24,25 @@ class ScheduleController extends Controller
     public function __construct(
         private ScheduleConflictService $conflictService,
         private ScheduleSuggestService $suggestService,
-        private OutboxService $outboxService
+        private OutboxService $outboxService,
+        private ScheduleVersionService $versionService
     ) {}
 
     public function versions(Request $request): JsonResponse
     {
-        $versions = ScheduleVersion::with('creator')
-            ->orderBy('created_at', 'desc')
+        $this->authorize('viewAny', ScheduleItem::class);
+
+        $query = ScheduleVersion::with('creator');
+
+        if ($status = $request->query('status')) {
+            $query->where('status', $status);
+        }
+
+        if ($termId = $request->query('termId')) {
+            $query->where('term_id', $termId);
+        }
+
+        $versions = $query->orderBy('created_at', 'desc')
             ->paginate($request->integer('per_page', 50));
 
         return response()->json($versions);
@@ -37,18 +50,13 @@ class ScheduleController extends Controller
 
     public function createVersion(Request $request): JsonResponse
     {
+        $this->authorize('create', ScheduleItem::class);
+
         $validated = $request->validate([
             'term_id' => ['required', 'integer', 'exists:terms,id'],
-            'status' => ['sometimes', 'in:draft,published,archived'],
         ]);
 
-        $version = ScheduleVersion::create([
-            'term_id' => $validated['term_id'],
-            'status' => $validated['status'] ?? 'draft',
-            'created_by' => auth()->id(),
-        ]);
-
-        AuditService::log('schedule.version.created', 'schedule_version', $version->id, null, $version->toArray());
+        $version = $this->versionService->createDraftVersion($validated['term_id'], auth()->id());
 
         return response()->json($version->load('creator'), 201);
     }
@@ -120,6 +128,7 @@ class ScheduleController extends Controller
 
         DB::beginTransaction();
         try {
+            $version = ScheduleVersion::findOrFail($dto->versionId);
             $before = null;
             $item = ScheduleItem::create([
                 'version_id' => $dto->versionId,
@@ -133,6 +142,8 @@ class ScheduleController extends Controller
                 'override_reason' => $dto->overrideReason,
                 'created_by' => auth()->id(),
             ]);
+
+            $this->versionService->logItemChange($version->id, 'create', $item, auth()->id(), null, $item->toArray());
 
             $after = $item->toArray();
             $after['conflicts'] = $conflicts;
@@ -230,5 +241,88 @@ class ScheduleController extends Controller
         return response()->json([
             'data' => $teachers,
         ]);
+    }
+
+    public function publishVersion(Request $request, int $id): JsonResponse
+    {
+        $this->authorize('update', ScheduleItem::class);
+
+        $version = $this->versionService->publishVersion($id, auth()->id());
+
+        return response()->json($version->load('creator'));
+    }
+
+    public function archiveVersion(Request $request, int $id): JsonResponse
+    {
+        $this->authorize('update', ScheduleItem::class);
+
+        $version = $this->versionService->archiveVersion($id, auth()->id());
+
+        return response()->json($version->load('creator'));
+    }
+
+    public function changes(Request $request): JsonResponse
+    {
+        $this->authorize('viewAny', ScheduleItem::class);
+
+        $validated = $request->validate([
+            'versionId' => ['required', 'integer', 'exists:schedule_versions,id'],
+            'dateFrom' => ['sometimes', 'date'],
+            'dateTo' => ['sometimes', 'date'],
+        ]);
+
+        $changes = $this->versionService->getChanges(
+            $validated['versionId'],
+            $validated['dateFrom'] ?? null,
+            $validated['dateTo'] ?? null
+        );
+
+        return response()->json(['data' => $changes]);
+    }
+
+    public function diff(Request $request): JsonResponse
+    {
+        $this->authorize('viewAny', ScheduleItem::class);
+
+        $validated = $request->validate([
+            'fromVersionId' => ['required', 'integer', 'exists:schedule_versions,id'],
+            'toVersionId' => ['required', 'integer', 'exists:schedule_versions,id'],
+        ]);
+
+        $diff = $this->versionService->getDiff(
+            $validated['fromVersionId'],
+            $validated['toVersionId']
+        );
+
+        return response()->json($diff);
+    }
+
+    public function changelog(Request $request, int $id): JsonResponse
+    {
+        $version = ScheduleVersion::findOrFail($id);
+        $this->authorize('viewAny', ScheduleItem::class);
+
+        $itemId = $request->query('item_id') ? (int) $request->query('item_id') : null;
+
+        $changelog = $this->versionService->getChangelog($version, $itemId);
+
+        return response()->json(['data' => $changelog]);
+    }
+
+    public function compareVersions(Request $request): JsonResponse
+    {
+        $this->authorize('viewAny', ScheduleItem::class);
+
+        $validated = $request->validate([
+            'version1_id' => ['required', 'integer', 'exists:schedule_versions,id'],
+            'version2_id' => ['required', 'integer', 'exists:schedule_versions,id'],
+        ]);
+
+        $version1 = ScheduleVersion::findOrFail($validated['version1_id']);
+        $version2 = ScheduleVersion::findOrFail($validated['version2_id']);
+
+        $diff = $this->versionService->compareVersions($version1, $version2);
+
+        return response()->json($diff);
     }
 }

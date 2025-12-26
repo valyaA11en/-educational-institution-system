@@ -120,3 +120,4 @@ return [
     'channel_manager' => \BeyondCode\LaravelWebSockets\WebSockets\Channels\ChannelManager::class,
 ];
 
+

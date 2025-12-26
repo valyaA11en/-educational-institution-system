@@ -6,11 +6,16 @@ use App\Models\Ticket;
 use App\Models\TicketSLA;
 use App\Models\Notification;
 use App\Models\User;
+use App\Services\NotificationService;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Log;
 
 class SlaService
 {
+    public function __construct(
+        private NotificationService $notificationService
+    ) {}
+
     /**
      * Apply SLA to a ticket based on category and priority
      */
@@ -168,33 +173,31 @@ class SlaService
 
         // Notify assignee
         if ($ticket->assigned_to) {
-            Notification::create([
-                'user_id' => $ticket->assigned_to,
-                'type' => 'ticket.overdue',
-                'payload_json' => [
+            $this->notificationService->create(
+                $ticket->assigned_to,
+                'ticket.overdue',
+                [
                     'ticket_id' => $ticket->id,
                     'ticket_title' => $ticket->title,
                     'overdue_minutes' => $overdueMinutes,
                     'overdue_hours' => round($overdueMinutes / 60, 2),
-                ],
-                'channel' => 'in_app',
-                'status' => 'new',
-            ]);
+                    'url' => "/tickets/{$ticket->id}",
+                ]
+            );
         }
 
         // Notify creator
-        Notification::create([
-            'user_id' => $ticket->created_by,
-            'type' => 'ticket.overdue',
-            'payload_json' => [
+        $this->notificationService->create(
+            $ticket->created_by,
+            'ticket.overdue',
+            [
                 'ticket_id' => $ticket->id,
                 'ticket_title' => $ticket->title,
                 'overdue_minutes' => $overdueMinutes,
                 'overdue_hours' => round($overdueMinutes / 60, 2),
-            ],
-            'channel' => 'in_app',
-            'status' => 'new',
-        ]);
+                'url' => "/tickets/{$ticket->id}",
+            ]
+        );
 
         // Trigger escalation if rules exist
         if ($ticket->escalation_rules) {
@@ -211,31 +214,29 @@ class SlaService
 
         // Notify assignee
         if ($ticket->assigned_to) {
-            Notification::create([
-                'user_id' => $ticket->assigned_to,
-                'type' => 'ticket.response_overdue',
-                'payload_json' => [
+            $this->notificationService->create(
+                $ticket->assigned_to,
+                'ticket.response_overdue',
+                [
                     'ticket_id' => $ticket->id,
                     'ticket_title' => $ticket->title,
                     'overdue_minutes' => $overdueMinutes,
-                ],
-                'channel' => 'in_app',
-                'status' => 'new',
-            ]);
+                    'url' => "/tickets/{$ticket->id}",
+                ]
+            );
         }
 
         // Notify creator
-        Notification::create([
-            'user_id' => $ticket->created_by,
-            'type' => 'ticket.response_overdue',
-            'payload_json' => [
+        $this->notificationService->create(
+            $ticket->created_by,
+            'ticket.response_overdue',
+            [
                 'ticket_id' => $ticket->id,
                 'ticket_title' => $ticket->title,
                 'overdue_minutes' => $overdueMinutes,
-            ],
-            'channel' => 'in_app',
-            'status' => 'new',
-        ]);
+                'url' => "/tickets/{$ticket->id}",
+            ]
+        );
     }
 
     /**
@@ -310,17 +311,16 @@ class SlaService
         $message = $rule['message'] ?? "Ticket #{$ticket->id} has been escalated";
 
         foreach ($userIds as $userId) {
-            Notification::create([
-                'user_id' => $userId,
-                'type' => 'ticket.escalated',
-                'payload_json' => [
+            $this->notificationService->create(
+                $userId,
+                'ticket.escalated',
+                [
                     'ticket_id' => $ticket->id,
                     'ticket_title' => $ticket->title,
                     'message' => $message,
-                ],
-                'channel' => 'in_app',
-                'status' => 'new',
-            ]);
+                    'url' => "/tickets/{$ticket->id}",
+                ]
+            );
         }
     }
 
@@ -337,30 +337,28 @@ class SlaService
             $ticket->save();
 
             // Notify new assignee
-            Notification::create([
-                'user_id' => $newAssigneeId,
-                'type' => 'ticket.assigned',
-                'payload_json' => [
+            $this->notificationService->create(
+                $newAssigneeId,
+                'ticket.assigned',
+                [
                     'ticket_id' => $ticket->id,
                     'ticket_title' => $ticket->title,
                     'escalated' => true,
-                ],
-                'channel' => 'in_app',
-                'status' => 'new',
-            ]);
+                    'url' => "/tickets/{$ticket->id}",
+                ]
+            );
 
             // Notify old assignee if different
             if ($oldAssigneeId && $oldAssigneeId != $newAssigneeId) {
-                Notification::create([
-                    'user_id' => $oldAssigneeId,
-                    'type' => 'ticket.reassigned',
-                    'payload_json' => [
+                $this->notificationService->create(
+                    $oldAssigneeId,
+                    'ticket.reassigned',
+                    [
                         'ticket_id' => $ticket->id,
                         'ticket_title' => $ticket->title,
-                    ],
-                    'channel' => 'in_app',
-                    'status' => 'new',
-                ]);
+                        'url' => "/tickets/{$ticket->id}",
+                    ]
+                );
             }
         }
     }
@@ -396,17 +394,16 @@ class SlaService
     private function sendReminder(Ticket $ticket): void
     {
         if ($ticket->assigned_to) {
-            Notification::create([
-                'user_id' => $ticket->assigned_to,
-                'type' => 'ticket.sla_reminder',
-                'payload_json' => [
+            $this->notificationService->create(
+                $ticket->assigned_to,
+                'ticket.sla_reminder',
+                [
                     'ticket_id' => $ticket->id,
                     'ticket_title' => $ticket->title,
                     'hours_until_due' => now()->diffInHours($ticket->sla_due_at, false),
-                ],
-                'channel' => 'in_app',
-                'status' => 'new',
-            ]);
+                    'url' => "/tickets/{$ticket->id}",
+                ]
+            );
         }
 
         $ticket->update(['sla_reminder_sent_at' => now()]);

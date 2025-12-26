@@ -8,6 +8,7 @@ interface NotificationsState {
   loading: boolean
   filterType: string | null
   toastMessage: string | null
+  toastType: 'success' | 'error' | 'info' | 'warning'
   toastVisible: boolean
 }
 
@@ -17,6 +18,7 @@ export const useNotificationsStore = defineStore('notifications', {
     loading: false,
     filterType: null,
     toastMessage: null,
+    toastType: 'info',
     toastVisible: false,
   }),
 
@@ -91,8 +93,9 @@ export const useNotificationsStore = defineStore('notifications', {
       }
     },
 
-    showToast(message: string) {
+    showToast(message: string, type: 'success' | 'error' | 'info' | 'warning' = 'info') {
       this.toastMessage = message
+      this.toastType = type
       this.toastVisible = true
     },
 

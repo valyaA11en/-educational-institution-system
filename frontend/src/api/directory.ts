@@ -60,6 +60,11 @@ export const directoryApi = {
     const { data } = await apiClient.get<PaginatedResponse<GroupDTO>>('/v1/admin/directory/groups', { params })
     return data
   },
+  // Helper method for getting all groups (for dropdowns)
+  async getGroups(): Promise<GroupDTO[]> {
+    const response = await this.listGroups({ per_page: 1000 })
+    return response.data
+  },
   async getGroup(id: number) {
     const { data } = await apiClient.get<GroupDTO>(`/v1/admin/directory/groups/${id}`)
     return data

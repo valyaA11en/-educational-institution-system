@@ -45,4 +45,21 @@ class ChatThreadPolicy extends BasePolicy
         // Only members can write
         return $this->view($user, $thread);
     }
+
+    public function moderate(User $user, ChatThread $thread = null): bool
+    {
+        // For class-level checks (thread is null), check permission
+        if ($thread === null) {
+            return $user->permissions()->where('code', 'chat.moderate')->exists();
+        }
+
+        // For instance-level checks, check moderator role or permission
+        $isModerator = $thread->members()
+            ->where('user_id', $user->id)
+            ->wherePivot('role_in_chat', 'moderator')
+            ->exists();
+
+        return $isModerator
+            || $user->permissions()->where('code', 'chat.moderate')->exists();
+    }
 }

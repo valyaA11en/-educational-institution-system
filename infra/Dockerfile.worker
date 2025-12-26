@@ -31,3 +31,4 @@ COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 CMD ["php", "artisan", "queue:work", "--verbose", "--tries=3", "--timeout=90"]
 
 
+

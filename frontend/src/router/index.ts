@@ -25,6 +25,12 @@ const routes: RouteRecordRaw[] = [
         meta: { module: 'schedule' },
       },
       {
+        path: 'schedule/versions',
+        name: 'schedule-versions',
+        component: () => import('../pages/ScheduleVersions.vue'),
+        meta: { permission: 'schedule.read' },
+      },
+      {
         path: 'journal',
         name: 'journal',
         component: () => import('../views/modules/journal/JournalView.vue'),
@@ -49,10 +55,51 @@ const routes: RouteRecordRaw[] = [
         meta: { module: 'notifications' },
       },
       {
+        path: 'settings/notifications',
+        name: 'settings-notifications',
+        component: () => import('../pages/settings/Notifications.vue'),
+      },
+      {
         path: 'chat',
         name: 'chat',
         component: () => import('../pages/Chat.vue'),
         meta: { module: 'chat' },
+      },
+      {
+        path: 'exams',
+        name: 'exams',
+        component: () => import('../pages/Exams.vue'),
+        meta: { permission: 'exams.read' },
+      },
+      {
+        path: 'exams/new',
+        name: 'exam-new',
+        component: () => import('../pages/ExamNew.vue'),
+        meta: { permission: 'exams.create' },
+      },
+      {
+        path: 'exams/:id',
+        name: 'exam-detail',
+        component: () => import('../pages/ExamDetail.vue'),
+        meta: { permission: 'exams.read' },
+      },
+      {
+        path: 'contests',
+        name: 'contests',
+        component: () => import('../pages/Contests.vue'),
+        meta: { permission: 'contests.view' },
+      },
+      {
+        path: 'contests/new',
+        name: 'contest-new',
+        component: () => import('../pages/ContestNew.vue'),
+        meta: { permission: 'contests.manage' },
+      },
+      {
+        path: 'contests/:id',
+        name: 'contest-detail',
+        component: () => import('../pages/ContestDetail.vue'),
+        meta: { permission: 'contests.view' },
       },
       {
         path: 'documents',
@@ -61,10 +108,54 @@ const routes: RouteRecordRaw[] = [
         meta: { permission: 'documents.view' },
       },
       {
+        path: 'documents/new',
+        name: 'document-new',
+        component: () => import('../pages/DocumentNew.vue'),
+        meta: { permission: 'documents.create' },
+      },
+      {
         path: 'documents/:id',
         name: 'document-view',
         component: () => import('../pages/DocumentView.vue'),
         meta: { permission: 'documents.view' },
+      },
+      {
+        path: 'ktp',
+        name: 'ktp',
+        component: () => import('../pages/Ktp.vue'),
+        meta: { permission: 'curriculum.view' },
+      },
+      {
+        path: 'ktp/:id',
+        name: 'ktp-view',
+        component: () => import('../pages/KtpView.vue'),
+        meta: { permission: 'curriculum.view' },
+      },
+      {
+        path: 'tickets',
+        name: 'tickets',
+        component: () => import('../pages/Tickets.vue'),
+      },
+      {
+        path: 'tickets/:id',
+        name: 'ticket-view',
+        component: () => import('../pages/TicketView.vue'),
+      },
+      {
+        path: 'analytics/risks',
+        name: 'analytics-risks',
+        component: () => import('../pages/AnalyticsRisks.vue'),
+        meta: { permission: 'analytics.view' },
+      },
+      {
+        path: 'me/risks',
+        name: 'my-risks',
+        component: () => import('../pages/MyRisks.vue'),
+      },
+      {
+        path: 'parent/child/:id/risks',
+        name: 'parent-child-risks',
+        component: () => import('../pages/ParentChildRisks.vue'),
       },
       // Admin routes
       {
@@ -111,6 +202,18 @@ const routes: RouteRecordRaw[] = [
             name: 'admin-rules',
             component: () => import('../pages/admin/Rules.vue'),
             meta: { permission: 'rules.manage' },
+          },
+          {
+            path: 'tickets/overdue',
+            name: 'admin-tickets-overdue',
+            component: () => import('../pages/admin/TicketsOverdue.vue'),
+            meta: { permission: 'tickets.manage' },
+          },
+          {
+            path: 'chat-reports',
+            name: 'admin-chat-reports',
+            component: () => import('../pages/admin/ChatReports.vue'),
+            meta: { permission: 'chat.moderate' },
           },
         ],
       },

@@ -23,3 +23,4 @@ class StoreUserRequest extends FormRequest
     }
 }
 
+

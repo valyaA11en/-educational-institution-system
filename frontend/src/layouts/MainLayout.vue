@@ -20,6 +20,13 @@
             <v-list-item-subtitle>{{ auth.user?.email || auth.user?.phone || '' }}</v-list-item-subtitle>
           </v-list-item>
           <v-divider />
+          <v-list-item :to="{ name: 'settings-notifications' }">
+            <v-list-item-title>Настройки уведомлений</v-list-item-title>
+            <v-list-item-prepend>
+              <v-icon>mdi-bell-cog</v-icon>
+            </v-list-item-prepend>
+          </v-list-item>
+          <v-divider />
           <v-list-item @click="onLogout">
             <v-list-item-title>Выйти</v-list-item-title>
             <v-list-item-prepend>
@@ -77,11 +84,27 @@ const menuItems = computed(() => {
     { to: { name: 'materials' }, title: 'Материалы', icon: 'mdi-file-document-multiple' },
     { to: { name: 'notifications' }, title: 'Уведомления', icon: 'mdi-bell' },
     { to: { name: 'chat' }, title: 'Чаты', icon: 'mdi-forum' },
+    { to: { name: 'tickets' }, title: 'Тикеты', icon: 'mdi-ticket' },
+    { to: { name: 'exams' }, title: 'Экзамены', icon: 'mdi-school' },
+    { to: { name: 'contests' }, title: 'Конкурсы', icon: 'mdi-trophy' },
   ]
+
+  // Analytics/Risks (visible if has analytics.view permission or is student)
+  if (auth.hasPermission('analytics.view')) {
+    items.push({ to: { name: 'analytics-risks' }, title: 'Риски студентов', icon: 'mdi-alert-circle' })
+  } else {
+    // Student can see their own risks
+    items.push({ to: { name: 'my-risks' }, title: 'Мои риски', icon: 'mdi-alert-circle' })
+  }
 
   // Documents (visible if has documents.view permission)
   if (auth.hasPermission('documents.view')) {
     items.push({ to: { name: 'documents' }, title: 'Документы', icon: 'mdi-file-document' })
+  }
+
+  // KTP (visible if has curriculum.view permission)
+  if (auth.hasPermission('curriculum.view')) {
+    items.push({ to: { name: 'ktp' }, title: 'КТП', icon: 'mdi-calendar-text' })
   }
 
   // Admin menu items (visible if has directory.manage or users.read permission)
@@ -102,6 +125,19 @@ const menuItems = computed(() => {
     
     if (auth.hasPermission('rules.manage')) {
       items.push({ to: { name: 'admin-rules' }, title: 'Правила', icon: 'mdi-auto-fix' })
+    }
+    
+    if (auth.hasPermission('tickets.manage')) {
+      items.push({ to: { name: 'admin-tickets-overdue' }, title: 'Просроченные тикеты', icon: 'mdi-alert-circle' })
+    }
+    
+    if (auth.hasPermission('documents.registry')) {
+      items.push({ to: { name: 'admin-document-templates' }, title: 'Шаблоны документов', icon: 'mdi-file-document-edit' })
+      items.push({ to: { name: 'admin-document-registry' }, title: 'Реестр документов', icon: 'mdi-book-open-variant' })
+    }
+    
+    if (auth.hasPermission('chat.moderate')) {
+      items.push({ to: { name: 'admin-chat-reports' }, title: 'Жалобы на сообщения', icon: 'mdi-alert-circle' })
     }
   }
 

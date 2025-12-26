@@ -64,9 +64,6 @@ class DispatchOutboxEvents implements ShouldQueue
     {
         $event->markAsProcessing();
 
-        // Process rules
-        app(\App\Services\Rule\RuleEngine::class)->processEvent($event);
-
         // Broadcast to WebSocket
         $this->broadcastEvent($event);
 
@@ -74,6 +71,9 @@ class DispatchOutboxEvents implements ShouldQueue
         $this->writeToEventStore($event);
 
         $event->markAsSent();
+
+        // Process rules asynchronously via Job
+        \App\Jobs\ProcessRulesForEvent::dispatch($event->id);
     }
 
     protected function broadcastEvent(OutboxEvent $event): void
