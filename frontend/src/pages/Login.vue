@@ -37,6 +37,7 @@
                 {{ error }}
               </v-alert>
               <v-btn
+                v-if="!show2FA"
                 type="submit"
                 color="primary"
                 class="mt-4"
@@ -47,6 +48,14 @@
                 Войти
               </v-btn>
             </v-form>
+
+            <!-- 2FA Code Input -->
+            <TwoFactorCodeInput
+              v-if="show2FA"
+              :loading="auth.loading"
+              @submit="onVerify2FA"
+              ref="twoFactorRef"
+            />
 
             <!-- DEV-only quick login buttons -->
             <template v-if="isDev">
@@ -112,11 +121,15 @@
 import { ref, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
+import TwoFactorCodeInput from '../components/TwoFactorCodeInput.vue'
 
 const emailOrPhone = ref('')
 const password = ref('')
 const error = ref('')
 const formRef = ref()
+const twoFactorRef = ref()
+const show2FA = ref(false)
+const tempToken = ref('')
 
 const router = useRouter()
 const route = useRoute()
@@ -158,16 +171,40 @@ const onSubmit = async () => {
   }
 
   try {
-    await auth.login({
+    const result = await auth.login({
       emailOrPhone: emailOrPhone.value,
       password: password.value,
     })
+
+    if (result?.requires2fa && result.tempToken) {
+      show2FA.value = true
+      tempToken.value = result.tempToken
+      return
+    }
 
     const redirect = (route.query.redirect as string) || '/'
     router.push(redirect)
   } catch (err: any) {
     error.value = err.response?.data?.message || 'Ошибка входа. Проверьте данные.'
     console.error('Login error:', err)
+  }
+}
+
+const onVerify2FA = async (code: string) => {
+  error.value = ''
+  
+  try {
+    await auth.verify2FA(tempToken.value, code)
+
+    const redirect = (route.query.redirect as string) || '/'
+    router.push(redirect)
+  } catch (err: any) {
+    error.value = err.response?.data?.message || 'Неверный код. Попробуйте снова.'
+    if (twoFactorRef.value) {
+      twoFactorRef.value.setError(error.value)
+      twoFactorRef.value.clearCode()
+    }
+    console.error('2FA verify error:', err)
   }
 }
 </script>

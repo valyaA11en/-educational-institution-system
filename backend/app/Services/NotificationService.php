@@ -185,13 +185,13 @@ class NotificationService
     private function getDefaultMessage(string $type, array $payload): string
     {
         return match ($type) {
-            'document.requires_approval' => "Документ #{$payload['document_number'] ?? ''} требует вашего согласования",
-            'ticket.overdue' => "Тикет #{$payload['ticket_id'] ?? ''} просрочен",
-            'ticket.response_overdue' => "Требуется ответ на тикет #{$payload['ticket_id'] ?? ''}",
-            'ticket.assigned' => "Вам назначен тикет #{$payload['ticket_id'] ?? ''}",
-            'ticket.reassigned' => "Тикет #{$payload['ticket_id'] ?? ''} был переназначен",
-            'ticket.escalated' => "Тикет #{$payload['ticket_id'] ?? ''} был эскалирован",
-            'ticket.sla_reminder' => "Напоминание: тикет #{$payload['ticket_id'] ?? ''} скоро просрочится",
+            'document.requires_approval' => "Документ #" . ($payload['document_number'] ?? '') . " требует вашего согласования",
+            'ticket.overdue' => "Тикет #" . ($payload['ticket_id'] ?? '') . " просрочен",
+            'ticket.response_overdue' => "Требуется ответ на тикет #" . ($payload['ticket_id'] ?? '') . "",
+            'ticket.assigned' => "Вам назначен тикет #" . ($payload['ticket_id'] ?? '') . "",
+            'ticket.reassigned' => "Тикет #" . ($payload['ticket_id'] ?? '') . " был переназначен",
+            'ticket.escalated' => "Тикет #" . ($payload['ticket_id'] ?? '') . " был эскалирован",
+            'ticket.sla_reminder' => "Напоминание: тикет #" . ($payload['ticket_id'] ?? '') . " скоро просрочится",
             'grade.low_average' => $payload['message'] ?? 'У вас низкая средняя оценка',
             'risk.high' => $payload['message'] ?? 'Обнаружен высокий риск',
             default => $payload['message'] ?? 'У вас новое уведомление',

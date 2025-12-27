@@ -296,4 +296,67 @@ class DocumentController extends Controller
             'message' => 'DOCX download not implemented yet',
         ], 501);
     }
+
+    /**
+     * Print document as PDF
+     * GET /api/documents/{id}/print?format=pdf
+     */
+    public function print(int $id, Request $request)
+    {
+        $document = Document::with(['signer', 'acks.user'])->findOrFail($id);
+        $this->authorize('view', $document);
+
+        $format = $request->query('format', 'pdf');
+
+        if ($format !== 'pdf') {
+            return response()->json([
+                'message' => 'Only PDF format is supported for printing',
+            ], 422);
+        }
+
+        $tenant = app('tenant') ?? \App\Models\Tenant::first();
+        $data = $document->data_json ?? [];
+
+        // Get acknowledgment recipients
+        $acks = $document->acks()->with('user')->get();
+
+        $viewData = [
+            'document' => $document,
+            'tenant' => $tenant,
+            'data' => $data,
+            'acks' => $acks,
+        ];
+
+        // Select template based on document type
+        $template = 'print.document_general'; // fallback
+
+        if ($document->type === 'order') {
+            $template = 'print.order_gost';
+        } elseif ($document->type === 'decision') {
+            $template = 'print.decision_gost';
+        }
+
+        try {
+            $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView($template, $viewData);
+            
+            $filename = sprintf(
+                '%s_%s_%s.pdf',
+                $document->type,
+                $document->number ?? $document->id,
+                $document->date ? \Carbon\Carbon::parse($document->date)->format('Y-m-d') : now()->format('Y-m-d')
+            );
+
+            return $pdf->download($filename);
+        } catch (\Exception $e) {
+            \Log::error('Failed to generate PDF for document', [
+                'document_id' => $id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => 'Failed to generate PDF',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
 }

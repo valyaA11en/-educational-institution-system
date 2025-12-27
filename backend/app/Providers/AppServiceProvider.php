@@ -80,5 +80,25 @@ class AppServiceProvider extends ServiceProvider
         \App\Models\UserLinkParentChild::observe(\App\Observers\UserLinkParentChildObserver::class);
         // Note: GroupMember, TeacherSubjectGroup are pivot tables, observers need to be registered differently
         // They will be handled via model events or direct cache invalidation in controllers
+
+        // Register HasTenant trait for models
+        $models = [
+            \App\Models\Group::class,
+            \App\Models\Subject::class,
+            \App\Models\Room::class,
+            \App\Models\ScheduleVersion::class,
+            \App\Models\ScheduleItem::class,
+            \App\Models\Assignment::class,
+            \App\Models\Material::class,
+            \App\Models\Document::class,
+            \App\Models\Exam::class,
+            \App\Models\Contest::class,
+        ];
+
+        foreach ($models as $model) {
+            if (method_exists($model, 'bootHasTenant')) {
+                // Trait will auto-boot
+            }
+        }
     }
 }

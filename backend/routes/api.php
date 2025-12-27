@@ -33,17 +33,40 @@ use Illuminate\Support\Facades\Route;
 // Realtime replay endpoint (outside of versioned prefix): /api/realtime/replay
 Route::middleware('auth:api')->get('realtime/replay', [RealtimeController::class, 'replay']);
 
+// Metrics and health (public for monitoring)
+Route::get('metrics', [\App\Http\Controllers\Api\V1\MetricsController::class, 'prometheus']);
+Route::get('health', [\App\Http\Controllers\Api\V1\MetricsController::class, 'health']);
+
 Route::prefix('v1')->group(function (): void {
     // Public routes
-    Route::post('auth/login', [AuthController::class, 'login']);
+    Route::post('auth/login', [AuthController::class, 'login'])->middleware('throttle:login');
     Route::post('auth/refresh', [AuthController::class, 'refresh']);
+    Route::post('auth/2fa/verify', [AuthController::class, 'verify2FA']);
 
-    // Protected routes
-    Route::middleware('auth:api')->group(function (): void {
+        // Print routes (protected)
+        Route::middleware('auth:api')->prefix('print')->group(function (): void {
+            Route::get('schedule', [\App\Http\Controllers\Api\V1\PrintController::class, 'schedule']);
+            Route::get('journal', [\App\Http\Controllers\Api\V1\PrintController::class, 'journal']);
+            Route::get('attendance', [\App\Http\Controllers\Api\V1\PrintController::class, 'attendance']);
+        });
+
+        // Protected routes
+        Route::middleware('auth:api')->group(function (): void {
+        // Tenant context
+        Route::prefix('tenant')->group(function (): void {
+            Route::get('current', [\App\Http\Controllers\Api\V1\TenantContextController::class, 'current']);
+            Route::post('switch', [\App\Http\Controllers\Api\V1\TenantContextController::class, 'switch'])->middleware('role:admin');
+            Route::get('list', [\App\Http\Controllers\Api\V1\TenantContextController::class, 'list'])->middleware('role:admin');
+        });
+
         // Auth
         Route::prefix('auth')->group(function (): void {
             Route::get('me', [AuthController::class, 'me']);
             Route::post('logout', [AuthController::class, 'logout']);
+            Route::get('2fa/status', [\App\Http\Controllers\Api\V1\TwoFactorStatusController::class, 'status']);
+            Route::post('2fa/setup', [\App\Http\Controllers\Api\V1\TwoFactorController::class, 'setup']);
+            Route::post('2fa/enable', [\App\Http\Controllers\Api\V1\TwoFactorController::class, 'enable']);
+            Route::post('2fa/disable', [\App\Http\Controllers\Api\V1\TwoFactorController::class, 'disable']);
         });
 
         // Roles
@@ -162,7 +185,7 @@ Route::prefix('v1')->group(function (): void {
             Route::get('{id}', [AssignmentController::class, 'show']);
             Route::put('{id}', [AssignmentController::class, 'update'])->middleware('can:assignments.update');
             Route::delete('{id}', [AssignmentController::class, 'destroy'])->middleware('can:assignments.delete');
-            Route::post('{id}/submit', [AssignmentController::class, 'submit'])->middleware('can:assignments.submit');
+            Route::post('{id}/submit', [AssignmentController::class, 'submit'])->middleware(['can:assignments.submit', 'throttle:assignment-submit']);
             Route::post('{id}/submissions/{submissionId}/grade', [AssignmentController::class, 'grade'])->middleware('can:assignments.grade');
         });
 
@@ -178,7 +201,7 @@ Route::prefix('v1')->group(function (): void {
 
         // Files
         Route::prefix('files')->group(function (): void {
-            Route::post('presigned-upload', [FileController::class, 'getPresignedUploadUrl'])->middleware('can:assignments.submit');
+            Route::post('presigned-upload', [FileController::class, 'getPresignedUploadUrl'])->middleware(['can:assignments.submit', 'throttle:file-presign']);
             Route::post('{id}/confirm', [FileController::class, 'confirmUpload'])->middleware('can:assignments.submit');
             Route::get('{id}/download', [FileController::class, 'download']);
         });
@@ -191,6 +214,7 @@ Route::prefix('v1')->group(function (): void {
             Route::get('{id}', [DocumentController::class, 'show']);
             Route::patch('{id}', [DocumentController::class, 'update'])->middleware('can:documents.update');
             Route::get('{id}/download', [DocumentController::class, 'download']);
+            Route::get('{id}/print', [DocumentController::class, 'print']);
             Route::post('{id}/send-to-approval', [DocumentController::class, 'sendToApproval'])->middleware('can:documents.approve');
             Route::post('{id}/approve', [DocumentController::class, 'approve'])->middleware('can:documents.approve');
             Route::post('{id}/reject', [DocumentController::class, 'reject'])->middleware('can:documents.approve');
@@ -286,7 +310,7 @@ Route::prefix('v1')->group(function (): void {
             Route::get('threads', [ChatController::class, 'threads']);
             Route::post('threads', [ChatController::class, 'createThread']);
             Route::get('threads/{threadId}/messages', [ChatController::class, 'messages']);
-            Route::post('threads/{threadId}/messages', [ChatController::class, 'sendMessage']);
+            Route::post('threads/{threadId}/messages', [ChatController::class, 'sendMessage'])->middleware('throttle:chat-messages');
             Route::delete('threads/{threadId}/messages/{messageId}', [ChatController::class, 'deleteMessage']);
             Route::post('{id}/report-message', [ChatController::class, 'reportMessage']);
             Route::get('{id}/settings', [ChatController::class, 'getSettings']);
@@ -359,6 +383,39 @@ Route::prefix('v1')->group(function (): void {
         Route::prefix('admin/export')->middleware('role:admin')->group(function (): void {
             Route::get('users-xlsx', [ExportController::class, 'exportUsers']);
             Route::get('schedule-xlsx', [ExportController::class, 'exportSchedule']);
+        });
+
+        // Admin Webhooks
+        Route::prefix('admin/webhooks')->middleware('role:admin')->group(function (): void {
+            Route::get('/', [\App\Http\Controllers\Api\Admin\WebhookController::class, 'index']);
+            Route::post('/', [\App\Http\Controllers\Api\Admin\WebhookController::class, 'store']);
+            Route::get('{id}', [\App\Http\Controllers\Api\Admin\WebhookController::class, 'show']);
+            Route::patch('{id}', [\App\Http\Controllers\Api\Admin\WebhookController::class, 'update']);
+            Route::delete('{id}', [\App\Http\Controllers\Api\Admin\WebhookController::class, 'destroy']);
+        });
+
+        // Reports (PDF generation)
+        Route::prefix('reports')->middleware('can:reports.view')->group(function (): void {
+            Route::get('journal', [\App\Http\Controllers\Api\V1\ReportController::class, 'journal']);
+            Route::get('schedule', [\App\Http\Controllers\Api\V1\ReportController::class, 'schedule']);
+            Route::get('grade-sheet', [\App\Http\Controllers\Api\V1\ReportController::class, 'gradeSheet']);
+            Route::get('order', [\App\Http\Controllers\Api\V1\ReportController::class, 'order']);
+        });
+
+        // Admin Tenants
+        Route::prefix('admin/tenants')->middleware('role:admin')->group(function (): void {
+            Route::get('/', [\App\Http\Controllers\Api\Admin\TenantController::class, 'index']);
+            Route::post('/', [\App\Http\Controllers\Api\Admin\TenantController::class, 'store']);
+            Route::get('{id}', [\App\Http\Controllers\Api\Admin\TenantController::class, 'show']);
+            Route::patch('{id}', [\App\Http\Controllers\Api\Admin\TenantController::class, 'update']);
+            Route::delete('{id}', [\App\Http\Controllers\Api\Admin\TenantController::class, 'destroy']);
+            Route::post('{id}/switch', [\App\Http\Controllers\Api\Admin\TenantSwitchController::class, 'switch']);
+        });
+            Route::get('/', [\App\Http\Controllers\Api\Admin\TenantController::class, 'index']);
+            Route::post('/', [\App\Http\Controllers\Api\Admin\TenantController::class, 'store']);
+            Route::get('{id}', [\App\Http\Controllers\Api\Admin\TenantController::class, 'show']);
+            Route::patch('{id}', [\App\Http\Controllers\Api\Admin\TenantController::class, 'update']);
+            Route::delete('{id}', [\App\Http\Controllers\Api\Admin\TenantController::class, 'destroy']);
         });
 
         // Admin Settings

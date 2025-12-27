@@ -14,6 +14,7 @@ class AuditLog extends Model
 
     protected $fillable = [
         'user_id',
+        'tenant_id',
         'action',
         'entity',
         'entity_id',
@@ -36,5 +37,9 @@ class AuditLog extends Model
         return $this->belongsTo(User::class);
     }
 }
+
+
+
+
 
 

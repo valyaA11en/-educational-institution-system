@@ -49,3 +49,9 @@ php artisan outbox:replay --channel=user:123 --since=-1 day --limit=100
 - `notification.created` - Создание уведомления
 
 
+
+
+
+
+
+

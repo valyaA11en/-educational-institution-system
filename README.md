@@ -230,3 +230,14 @@ docker compose exec queue-worker php artisan queue:work
 - Использовать HTTPS в production (push требует HTTPS)
 - Реализовать отправку WebPush из backend (TODO: уже сохранена подписка, отправка опциональна)
 
+## Acceptance Scenarios (Pack #6)
+
+Подробные acceptance сценарии для проверки функциональности:
+- **Exams**: создание экзамена, seed registrations, пересчёт допусков, выставление результатов, формирование и экспорт ведомости
+- **Contests**: создание конкурса, рубрика, targets, jury, отправка работы, оценивание, публикация результатов, генерация и скачивание сертификатов
+- **Import/Export**: импорт users-xlsx, экспорт schedule-xlsx
+- **Webhooks**: создание endpoint, отправка при изменении расписания, проверка доставки
+- **Load Testing**: запуск smoke test, проверка p95 latency и error rate
+
+См. [docs/acceptance-scenarios.md](docs/acceptance-scenarios.md) для детальных инструкций.
+

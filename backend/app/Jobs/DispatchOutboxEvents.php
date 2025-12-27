@@ -74,6 +74,9 @@ class DispatchOutboxEvents implements ShouldQueue
 
         // Process rules asynchronously via Job
         \App\Jobs\ProcessRulesForEvent::dispatch($event->id);
+
+        // Deliver webhooks asynchronously
+        \App\Jobs\DeliverWebhooks::dispatch($event->id);
     }
 
     protected function broadcastEvent(OutboxEvent $event): void

@@ -32,3 +32,8 @@ class ContestTarget extends Model
     }
 }
 
+
+
+
+
+

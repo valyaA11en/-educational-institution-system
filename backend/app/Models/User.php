@@ -8,10 +8,11 @@ use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Tymon\JWTAuth\Contracts\JWTSubject;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use App\Traits\HasTenant;
 
 class User extends Authenticatable implements JWTSubject
 {
-    use HasFactory, Notifiable;
+    use HasFactory, Notifiable, HasTenant;
 
     /**
      * The attributes that are mass assignable.
@@ -24,6 +25,7 @@ class User extends Authenticatable implements JWTSubject
         'phone',
         'password_hash',
         'status',
+        'tenant_id',
     ];
 
     /**
@@ -69,6 +71,32 @@ class User extends Authenticatable implements JWTSubject
             ->withTimestamps();
     }
 
+    public function tenants(): BelongsToMany
+    {
+        return $this->belongsToMany(Tenant::class, 'tenant_members')
+            ->withPivot('role_in_tenant')
+            ->withTimestamps();
+    }
+
+    public function hasRole(string $roleName): bool
+    {
+        return $this->roles()->where('name', $roleName)->exists();
+    }
+
+    public function getTenantRole(?int $tenantId = null): ?string
+    {
+        $tenantId = $tenantId ?? app('tenant_id');
+        if (!$tenantId) {
+            return null;
+        }
+
+        $member = \App\Models\TenantMember::where('tenant_id', $tenantId)
+            ->where('user_id', $this->id)
+            ->first();
+
+        return $member?->role_in_tenant;
+    }
+
     /**
      * Get the identifier that will be stored in the subject claim of the JWT.
      */
@@ -82,7 +110,16 @@ class User extends Authenticatable implements JWTSubject
      */
     public function getJWTCustomClaims(): array
     {
-        return [];
+        $claims = [];
+        
+        // Include tenant_id if available
+        if (app()->bound('tenant_id')) {
+            $claims['tenant_id'] = app('tenant_id');
+        } elseif ($this->tenant_id) {
+            $claims['tenant_id'] = $this->tenant_id;
+        }
+        
+        return $claims;
     }
 
     // TODO: добавить методы для object-level permissions

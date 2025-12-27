@@ -14,4 +14,7 @@ export * from './schedule'
 export * from './documents'
 export * from './ktp'
 export * from './contests'
+export * from './tenants'
+export * from './2fa'
+export * from './print'
 

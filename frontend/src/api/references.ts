@@ -1,5 +1,6 @@
-import { apiClient } from './client'
+import apiClient from './client'
 import type { UserDTO } from './users'
+import type { RoleDTO } from './dto'
 
 export interface TermDTO {
   id: number
@@ -33,7 +34,7 @@ export const referencesApi = {
       })
       // Filter by role name on frontend (temporary workaround)
       return data.data.filter((user) =>
-        user.roles?.some((role) => role.name.toLowerCase().includes('куратор'))
+        user.roles?.some((role: RoleDTO) => role.name.toLowerCase().includes('куратор'))
       )
     } catch (error) {
       console.error('Failed to load curators:', error)
@@ -41,5 +42,12 @@ export const referencesApi = {
     }
   },
 }
+
+
+
+
+
+
+
 
 

@@ -5,6 +5,7 @@
       <v-app-bar-nav-icon @click="drawer = !drawer" />
       <v-toolbar-title>PDO</v-toolbar-title>
       <v-spacer />
+      <TenantSelector />
       <v-chip v-if="ws.connected" color="success" size="small" class="mr-2">
         <v-icon start size="small">mdi-circle</v-icon>
         WS подключен
@@ -24,6 +25,12 @@
             <v-list-item-title>Настройки уведомлений</v-list-item-title>
             <v-list-item-prepend>
               <v-icon>mdi-bell-cog</v-icon>
+            </v-list-item-prepend>
+          </v-list-item>
+          <v-list-item :to="{ name: 'settings-security' }">
+            <v-list-item-title>Безопасность</v-list-item-title>
+            <v-list-item-prepend>
+              <v-icon>mdi-shield-lock</v-icon>
             </v-list-item-prepend>
           </v-list-item>
           <v-divider />
@@ -68,6 +75,7 @@ import { useAuthStore } from '../stores/auth'
 import { useWsStore } from '../stores/ws'
 import { useRouter } from 'vue-router'
 import NotificationCenter from '../components/NotificationCenter.vue'
+import TenantSelector from '../components/TenantSelector.vue'
 
 const drawer = ref(true)
 
@@ -138,6 +146,10 @@ const menuItems = computed(() => {
     
     if (auth.hasPermission('chat.moderate')) {
       items.push({ to: { name: 'admin-chat-reports' }, title: 'Жалобы на сообщения', icon: 'mdi-alert-circle' })
+    }
+    
+    if (auth.hasRole('admin')) {
+      items.push({ to: { name: 'admin-webhooks' }, title: 'Webhooks', icon: 'mdi-webhook' })
     }
   }
 

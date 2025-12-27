@@ -27,3 +27,7 @@ class ContestJury extends Model
     }
 }
 
+
+
+
+

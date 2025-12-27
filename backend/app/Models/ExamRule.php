@@ -28,3 +28,8 @@ class ExamRule extends Model
     }
 }
 
+
+
+
+
+

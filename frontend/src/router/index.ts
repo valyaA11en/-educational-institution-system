@@ -1,4 +1,4 @@
-import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
+import { createRouter, createWebHistory, type RouteRecordRaw, type RouteLocationRaw } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 
 const routes: RouteRecordRaw[] = [
@@ -58,6 +58,11 @@ const routes: RouteRecordRaw[] = [
         path: 'settings/notifications',
         name: 'settings-notifications',
         component: () => import('../pages/settings/Notifications.vue'),
+      },
+      {
+        path: 'settings/security',
+        name: 'settings-security',
+        component: () => import('../pages/settings/Security.vue'),
       },
       {
         path: 'chat',
@@ -215,6 +220,12 @@ const routes: RouteRecordRaw[] = [
             component: () => import('../pages/admin/ChatReports.vue'),
             meta: { permission: 'chat.moderate' },
           },
+          {
+            path: 'webhooks',
+            name: 'admin-webhooks',
+            component: () => import('../pages/admin/Webhooks.vue'),
+            meta: { role: 'admin' },
+          },
         ],
       },
     ],
@@ -226,7 +237,7 @@ const router = createRouter({
   routes,
 })
 
-router.beforeEach((to, from, next) => {
+router.beforeEach((to, _from, next) => {
   const auth = useAuthStore()
 
   // Public routes (login page)
@@ -248,8 +259,9 @@ router.beforeEach((to, from, next) => {
   }
 
   // Check per-route permissions
-  if (to.meta.permission && !auth.hasPermission(to.meta.permission)) {
-    next({ name: 'dashboard' })
+  const permission = to.meta.permission as string | undefined
+  if (permission && !auth.hasPermission(permission)) {
+    next({ name: 'dashboard' } as RouteLocationRaw)
     return
   }
 

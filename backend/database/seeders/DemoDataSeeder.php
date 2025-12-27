@@ -28,7 +28,14 @@ class DemoDataSeeder extends Seeder
 {
     public function run(): void
     {
-        DB::transaction(function (): void {
+        $tenant = \App\Models\Tenant::where('slug', 'demo')->first();
+        if (!$tenant) {
+            return;
+        }
+
+        app()->instance('tenant_id', $tenant->id);
+
+        DB::transaction(function () use ($tenant): void {
             // 1. Academic Year + Term
             $currentYear = date('Y');
             $termId = DB::table('terms')->insertGetId([

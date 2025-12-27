@@ -2,26 +2,29 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class UserSession extends Model
 {
-    public $timestamps = false;
+    use HasFactory;
 
     protected $fillable = [
         'user_id',
-        'ip',
+        'device_id',
+        'device_name',
+        'ip_address',
         'user_agent',
-        'last_seen_at',
-        'created_at',
+        'last_activity',
+        'is_active',
     ];
 
     protected function casts(): array
     {
         return [
-            'last_seen_at' => 'datetime',
-            'created_at' => 'datetime',
+            'last_activity' => 'datetime',
+            'is_active' => 'boolean',
         ];
     }
 
@@ -30,6 +33,3 @@ class UserSession extends Model
         return $this->belongsTo(User::class);
     }
 }
-
-
-

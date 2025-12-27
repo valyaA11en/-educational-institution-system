@@ -6,10 +6,11 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use App\Traits\HasTenant;
 
 class ScheduleItem extends Model
 {
-    use HasFactory;
+    use HasFactory, HasTenant;
 
     protected $fillable = [
         'version_id',
@@ -22,6 +23,7 @@ class ScheduleItem extends Model
         'room_id',
         'override_reason',
         'created_by',
+        'tenant_id',
     ];
 
     protected function casts(): array
@@ -71,5 +73,10 @@ class ScheduleItem extends Model
         return $this->hasMany(ScheduleReplacement::class, 'schedule_item_id');
     }
 }
+
+
+
+
+
 
 

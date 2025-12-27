@@ -13,6 +13,13 @@ class DirectoryDemoSeeder extends Seeder
 {
     public function run(): void
     {
+        $tenant = \App\Models\Tenant::where('slug', 'demo')->first();
+        if (!$tenant) {
+            return;
+        }
+
+        app()->instance('tenant_id', $tenant->id);
+
         // Groups and subgroups
         $groups = [
             ['name' => '11A', 'code' => '11A'],
@@ -84,6 +91,12 @@ class DirectoryDemoSeeder extends Seeder
         }
     }
 }
+
+
+
+
+
+
 
 
 

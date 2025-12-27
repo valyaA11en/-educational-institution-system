@@ -6,16 +6,18 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use App\Traits\HasTenant;
 
 class ScheduleVersion extends Model
 {
-    use HasFactory;
+    use HasFactory, HasTenant;
 
     protected $fillable = [
         'term_id',
         'status',
         'created_by',
         'published_at',
+        'tenant_id',
     ];
 
     protected function casts(): array
@@ -35,5 +37,10 @@ class ScheduleVersion extends Model
         return $this->hasMany(ScheduleItem::class, 'version_id');
     }
 }
+
+
+
+
+
 
 

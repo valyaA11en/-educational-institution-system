@@ -1,0 +1,38 @@
+FROM alpine:latest
+
+# Install required packages
+RUN apk add --no-cache \
+    postgresql-client \
+    bash \
+    curl \
+    findutils \
+    gzip \
+    docker-cli
+
+# Install MinIO client (mc)
+RUN curl -o /usr/local/bin/mc https://dl.min.io/client/mc/release/linux-amd64/mc && \
+    chmod +x /usr/local/bin/mc
+
+# Install cron
+RUN apk add --no-cache dcron
+
+# Create backup directories
+RUN mkdir -p /backups/postgres /backups/minio
+
+# Copy backup scripts
+COPY scripts/backup-all.sh /usr/local/bin/backup-all.sh
+COPY scripts/backup-postgres.sh /usr/local/bin/backup-postgres.sh
+COPY scripts/backup-minio.sh /usr/local/bin/backup-minio.sh
+
+# Make scripts executable
+RUN chmod +x /usr/local/bin/backup-*.sh
+
+# Create cron job (runs daily at 2 AM)
+RUN echo "0 2 * * * /usr/local/bin/backup-all.sh >> /var/log/backup.log 2>&1" > /etc/crontabs/root
+
+# Create log file
+RUN touch /var/log/backup.log
+
+# Start cron in foreground
+CMD ["crond", "-f", "-l", "2"]
+

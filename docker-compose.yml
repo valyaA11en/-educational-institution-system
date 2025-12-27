@@ -41,6 +41,97 @@ services:
       file: ./infra/docker-compose.yml
       service: frontend
 
+  # K6 Load Testing Services
+  k6-smoke:
+    image: grafana/k6:latest
+    container_name: pdo_k6_smoke
+    profiles: ["loadtest"]
+    volumes:
+      - ./loadtest/k6:/scripts
+      - ./loadtest/results:/results
+    working_dir: /scripts
+    command: run --out json=/results/smoke.json smoke.js
+    environment:
+      - BASE_URL=${BASE_URL:-http://backend:8000}
+      - EMAIL=${TEST_EMAIL:-admin@example.com}
+      - PASSWORD=${TEST_PASSWORD:-password}
+    networks:
+      - pdo_network
+    depends_on:
+      - backend
+
+  k6-schedule:
+    image: grafana/k6:latest
+    container_name: pdo_k6_schedule
+    profiles: ["loadtest"]
+    volumes:
+      - ./loadtest/k6:/scripts
+      - ./loadtest/results:/results
+    working_dir: /scripts
+    command: run --out json=/results/schedule.json schedule.js
+    environment:
+      - BASE_URL=${BASE_URL:-http://backend:8000}
+      - EMAIL=${TEST_EMAIL:-scheduler@example.com}
+      - PASSWORD=${TEST_PASSWORD:-password}
+    networks:
+      - pdo_network
+    depends_on:
+      - backend
+
+  k6-chat:
+    image: grafana/k6:latest
+    container_name: pdo_k6_chat
+    profiles: ["loadtest"]
+    volumes:
+      - ./loadtest/k6:/scripts
+      - ./loadtest/results:/results
+    working_dir: /scripts
+    command: run --out json=/results/chat.json chat.js
+    environment:
+      - BASE_URL=${BASE_URL:-http://backend:8000}
+      - EMAIL=${TEST_EMAIL:-student@example.com}
+      - PASSWORD=${TEST_PASSWORD:-password}
+    networks:
+      - pdo_network
+    depends_on:
+      - backend
+
+  k6-assignments:
+    image: grafana/k6:latest
+    container_name: pdo_k6_assignments
+    profiles: ["loadtest"]
+    volumes:
+      - ./loadtest/k6:/scripts
+      - ./loadtest/results:/results
+    working_dir: /scripts
+    command: run --out json=/results/assignments.json assignments.js
+    environment:
+      - BASE_URL=${BASE_URL:-http://backend:8000}
+      - EMAIL=${TEST_EMAIL:-student@example.com}
+      - PASSWORD=${TEST_PASSWORD:-password}
+    networks:
+      - pdo_network
+    depends_on:
+      - backend
+
+  k6-documents:
+    image: grafana/k6:latest
+    container_name: pdo_k6_documents
+    profiles: ["loadtest"]
+    volumes:
+      - ./loadtest/k6:/scripts
+      - ./loadtest/results:/results
+    working_dir: /scripts
+    command: run --out json=/results/documents.json documents.js
+    environment:
+      - BASE_URL=${BASE_URL:-http://backend:8000}
+      - EMAIL=${TEST_EMAIL:-admin@example.com}
+      - PASSWORD=${TEST_PASSWORD:-password}
+    networks:
+      - pdo_network
+    depends_on:
+      - backend
+
 volumes:
   postgres_data:
   redis_data:
