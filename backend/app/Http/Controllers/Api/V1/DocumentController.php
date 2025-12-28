@@ -90,6 +90,47 @@ class DocumentController extends Controller
         // Generate document
         $document = $this->documentService->generateDocument($document);
 
+        // Record timeline events for students if document is related to students
+        // Check if data_json contains student_user_id or group_id
+        $data = $document->data_json ?? [];
+        $timelineService = app(\App\Services\StudentTimelineService::class);
+        
+        if (isset($data['student_user_id'])) {
+            // Single student document
+            $timelineService->record('document.created', $data['student_user_id'], [
+                'title' => "Документ: {$document->type}",
+                'description' => $document->number ? "№ {$document->number}" : null,
+                'related_entity_type' => Document::class,
+                'related_entity_id' => $document->id,
+                'payload' => [
+                    'type' => $document->type,
+                    'number' => $document->number,
+                    'date' => $document->date?->format('Y-m-d'),
+                ],
+                'event_date' => $document->date ?? now(),
+            ]);
+        } elseif (isset($data['group_id'])) {
+            // Group document - record for all students in group
+            $group = \App\Models\Group::find($data['group_id']);
+            if ($group) {
+                $students = $group->members()->wherePivot('role_in_group', 'student')->get();
+                foreach ($students as $student) {
+                    $timelineService->record('document.created', $student->id, [
+                        'title' => "Документ: {$document->type}",
+                        'description' => $document->number ? "№ {$document->number}" : null,
+                        'related_entity_type' => Document::class,
+                        'related_entity_id' => $document->id,
+                        'payload' => [
+                            'type' => $document->type,
+                            'number' => $document->number,
+                            'date' => $document->date?->format('Y-m-d'),
+                        ],
+                        'event_date' => $document->date ?? now(),
+                    ]);
+                }
+            }
+        }
+
         return response()->json($document->load(['template', 'creator']), 201);
     }
 

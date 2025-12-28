@@ -37,6 +37,29 @@ const routes: RouteRecordRaw[] = [
         meta: { module: 'journal' },
       },
       {
+        path: 'timeline',
+        name: 'timeline',
+        component: () => import('../pages/Timeline.vue'),
+        meta: { module: 'student' },
+      },
+      {
+        path: 'students/:id/timeline',
+        name: 'student-timeline',
+        component: () => import('../pages/StudentTimeline.vue'),
+        meta: { module: 'student' },
+      },
+      {
+        path: 'assistant',
+        name: 'assistant',
+        component: () => import('../pages/Assistant.vue'),
+      },
+      {
+        path: 'portfolio',
+        name: 'portfolio',
+        component: () => import('../pages/Portfolio.vue'),
+        meta: { module: 'student' },
+      },
+      {
         path: 'tasks',
         name: 'tasks',
         component: () => import('../views/modules/tasks/TasksView.vue'),

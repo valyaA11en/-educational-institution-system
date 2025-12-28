@@ -390,10 +390,29 @@ class ContestController extends Controller
             ->with('submission.participant')
             ->get();
 
+        $timelineService = app(\App\Services\StudentTimelineService::class);
+        
         foreach ($results as $result) {
             if ($result->submission && $result->submission->participant) {
+                $studentId = $result->submission->participant->id;
+                
+                // Record timeline event
+                $timelineService->record('contest.result', $studentId, [
+                    'title' => "Результат конкурса: {$contest->title}",
+                    'description' => $result->place ? "Место: {$result->place}, Балл: {$result->final_score}" : "Балл: {$result->final_score}",
+                    'related_entity_type' => \App\Models\ContestResult::class,
+                    'related_entity_id' => $result->id,
+                    'payload' => [
+                        'contest_id' => $contest->id,
+                        'contest_title' => $contest->title,
+                        'final_score' => $result->final_score,
+                        'place' => $result->place,
+                    ],
+                    'event_date' => $result->published_at ?? now(),
+                ]);
+                
                 $this->notificationService->create(
-                    $result->submission->participant->id,
+                    $studentId,
                     'contest.results_published',
                     [
                         'title' => 'Результаты конкурса опубликованы',

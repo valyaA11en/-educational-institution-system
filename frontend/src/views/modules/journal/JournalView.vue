@@ -3,14 +3,15 @@
     <v-card-title class="d-flex justify-space-between align-center">
       <span>Журнал</span>
       <div class="d-flex gap-2">
-        <v-btn
-          color="success"
-          prepend-icon="mdi-file-excel"
-          @click="exportGradeChanges"
-          :loading="exporting"
-        >
-          Export Grade Changes
-        </v-btn>
+      <v-btn
+        color="success"
+        prepend-icon="mdi-file-excel"
+        @click="exportGradeChanges"
+        :loading="exporting"
+        :disabled="readOnly.isEnabled"
+      >
+        Export Grade Changes
+      </v-btn>
         <v-btn
           color="primary"
           prepend-icon="mdi-printer"
@@ -32,9 +33,11 @@
 import { ref } from 'vue'
 import { journalApi } from '../../../api/journal'
 import { printApi } from '../../../api/print'
+import { useReadOnlyStore } from '../../../stores/readOnly'
 import { useToast } from '../../../composables/useToast'
 
 const { showToast } = useToast()
+const readOnly = useReadOnlyStore()
 const exporting = ref(false)
 const printing = ref(false)
 

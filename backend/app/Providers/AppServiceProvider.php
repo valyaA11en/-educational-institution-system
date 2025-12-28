@@ -81,6 +81,10 @@ class AppServiceProvider extends ServiceProvider
         // Note: GroupMember, TeacherSubjectGroup are pivot tables, observers need to be registered differently
         // They will be handled via model events or direct cache invalidation in controllers
 
+        // Register timeline observers
+        Grade::observe(\App\Observers\GradeObserver::class);
+        Risk::observe(\App\Observers\RiskObserver::class);
+
         // Register HasTenant trait for models
         $models = [
             \App\Models\Group::class,

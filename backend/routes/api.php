@@ -39,8 +39,9 @@ Route::get('health', [\App\Http\Controllers\Api\V1\MetricsController::class, 'he
 
 Route::prefix('v1')->group(function (): void {
     // Public routes
+    Route::get('meta', [\App\Http\Controllers\Api\V1\MetaController::class, 'index']);
     Route::post('auth/login', [AuthController::class, 'login'])->middleware('throttle:login');
-    Route::post('auth/refresh', [AuthController::class, 'refresh']);
+    Route::post('auth/refresh', [AuthController::class, 'refresh'])->middleware('protect.refresh');
     Route::post('auth/2fa/verify', [AuthController::class, 'verify2FA']);
 
         // Print routes (protected)
@@ -48,6 +49,43 @@ Route::prefix('v1')->group(function (): void {
             Route::get('schedule', [\App\Http\Controllers\Api\V1\PrintController::class, 'schedule']);
             Route::get('journal', [\App\Http\Controllers\Api\V1\PrintController::class, 'journal']);
             Route::get('attendance', [\App\Http\Controllers\Api\V1\PrintController::class, 'attendance']);
+        });
+
+        // Student timeline
+        Route::middleware('auth:api')->prefix('students')->group(function (): void {
+            Route::get('{id}/timeline', [\App\Http\Controllers\Api\V1\StudentTimelineController::class, 'index']);
+            Route::get('{id}/timeline/export', [\App\Http\Controllers\Api\V1\StudentTimelineController::class, 'export']);
+        });
+
+        // Personal assistant
+        Route::middleware('auth:api')->prefix('assistant')->group(function (): void {
+            Route::get('today', [\App\Http\Controllers\Api\V1\PersonalAssistantController::class, 'today']);
+        });
+
+        // Portfolio
+        Route::middleware('auth:api')->prefix('portfolio')->group(function (): void {
+            Route::get('/', [\App\Http\Controllers\Api\V1\PortfolioController::class, 'index']);
+            Route::post('/', [\App\Http\Controllers\Api\V1\PortfolioController::class, 'store']);
+            Route::put('{id}', [\App\Http\Controllers\Api\V1\PortfolioController::class, 'update']);
+            Route::delete('{id}', [\App\Http\Controllers\Api\V1\PortfolioController::class, 'destroy']);
+        });
+
+        // Failed topics analysis
+        Route::middleware('auth:api')->prefix('analysis')->group(function (): void {
+            Route::get('failed-topics/{studentId}', [\App\Http\Controllers\Api\V1\FailedTopicsController::class, 'student']);
+            Route::get('complex-topics', [\App\Http\Controllers\Api\V1\FailedTopicsController::class, 'complexTopics']);
+        });
+
+        // Control panels
+        Route::middleware('auth:api')->prefix('control-panel')->group(function (): void {
+            Route::get('curator', [\App\Http\Controllers\Api\V1\ControlPanelController::class, 'curator']);
+            Route::get('methodist', [\App\Http\Controllers\Api\V1\ControlPanelController::class, 'methodist']);
+            Route::get('headmaster', [\App\Http\Controllers\Api\V1\ControlPanelController::class, 'headmaster']);
+        });
+
+        // Student export
+        Route::middleware('auth:api')->prefix('students')->group(function (): void {
+            Route::get('{id}/export', [\App\Http\Controllers\Api\V1\StudentExportController::class, 'export']);
         });
 
         // Protected routes
@@ -410,12 +448,6 @@ Route::prefix('v1')->group(function (): void {
             Route::patch('{id}', [\App\Http\Controllers\Api\Admin\TenantController::class, 'update']);
             Route::delete('{id}', [\App\Http\Controllers\Api\Admin\TenantController::class, 'destroy']);
             Route::post('{id}/switch', [\App\Http\Controllers\Api\Admin\TenantSwitchController::class, 'switch']);
-        });
-            Route::get('/', [\App\Http\Controllers\Api\Admin\TenantController::class, 'index']);
-            Route::post('/', [\App\Http\Controllers\Api\Admin\TenantController::class, 'store']);
-            Route::get('{id}', [\App\Http\Controllers\Api\Admin\TenantController::class, 'show']);
-            Route::patch('{id}', [\App\Http\Controllers\Api\Admin\TenantController::class, 'update']);
-            Route::delete('{id}', [\App\Http\Controllers\Api\Admin\TenantController::class, 'destroy']);
         });
 
         // Admin Settings

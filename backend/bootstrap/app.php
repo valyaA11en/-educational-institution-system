@@ -1,8 +1,27 @@
 <?php
 
+use App\Support\ValidateEnvironment;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
+use RuntimeException;
+
+// Validate environment variables before bootstrapping
+// Note: .env is loaded by Laravel's Application::configure(), but we validate early
+// using getenv() and $_ENV as fallbacks
+try {
+    ValidateEnvironment::validate();
+} catch (RuntimeException $e) {
+    // In console, output to stderr
+    if (php_sapi_name() === 'cli') {
+        fwrite(STDERR, $e->getMessage() . "\n");
+        exit(1);
+    }
+    
+    // In web context, show error page
+    http_response_code(500);
+    die('<!DOCTYPE html><html><head><title>Configuration Error</title></head><body><h1>Configuration Error</h1><pre>' . htmlspecialchars($e->getMessage()) . '</pre></body></html>');
+}
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withProviders([
@@ -16,12 +35,18 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        // Enable CORS for API routes
+        $middleware->api(prepend: [
+            \Illuminate\Http\Middleware\HandleCors::class,
+        ]);
+        
         $middleware->alias([
             'auth.token' => \App\Http\Middleware\AuthenticateWithToken::class,
             'permission' => \App\Http\Middleware\CheckPermission::class,
             'role' => \App\Http\Middleware\CheckRole::class,
             'object.permission' => \App\Http\Middleware\CheckObjectPermission::class,
             'tenant' => \App\Http\Middleware\IdentifyTenant::class,
+            'protect.refresh' => \App\Http\Middleware\ProtectRefreshEndpoint::class,
         ]);
         
         // Add security headers

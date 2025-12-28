@@ -1,5 +1,8 @@
 <template>
   <v-layout class="h-100">
+    <!-- Read-only Banner -->
+    <ReadOnlyBanner />
+    
     <!-- Topbar -->
     <v-app-bar app color="primary" dark>
       <v-app-bar-nav-icon @click="drawer = !drawer" />
@@ -76,6 +79,7 @@ import { useWsStore } from '../stores/ws'
 import { useRouter } from 'vue-router'
 import NotificationCenter from '../components/NotificationCenter.vue'
 import TenantSelector from '../components/TenantSelector.vue'
+import ReadOnlyBanner from '../components/ReadOnlyBanner.vue'
 
 const drawer = ref(true)
 
@@ -86,8 +90,11 @@ const router = useRouter()
 const menuItems = computed(() => {
   const items: Array<{ to: any; title: string; icon: string; divider?: boolean }> = [
     { to: { name: 'dashboard' }, title: 'Панель управления', icon: 'mdi-view-dashboard' },
+    { to: { name: 'assistant' }, title: 'Что делать сегодня', icon: 'mdi-check-circle' },
     { to: { name: 'schedule' }, title: 'Расписание', icon: 'mdi-calendar' },
     { to: { name: 'journal' }, title: 'Журнал', icon: 'mdi-book-open-page-variant' },
+    { to: { name: 'timeline' }, title: 'История обучения', icon: 'mdi-timeline' },
+    { to: { name: 'portfolio' }, title: 'Портфолио', icon: 'mdi-briefcase' },
     { to: { name: 'tasks' }, title: 'Задания', icon: 'mdi-clipboard-text' },
     { to: { name: 'materials' }, title: 'Материалы', icon: 'mdi-file-document-multiple' },
     { to: { name: 'notifications' }, title: 'Уведомления', icon: 'mdi-bell' },

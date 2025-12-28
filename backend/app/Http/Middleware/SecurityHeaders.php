@@ -12,16 +12,15 @@ class SecurityHeaders
     {
         $response = $next($request);
 
-        // Content Security Policy
-        $csp = "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' ws: wss:;";
+        // Content Security Policy (minimum)
+        $csp = "default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data:;";
         $response->headers->set('Content-Security-Policy', $csp);
 
         // Other security headers
         $response->headers->set('X-Content-Type-Options', 'nosniff');
-        $response->headers->set('X-Frame-Options', 'SAMEORIGIN');
-        $response->headers->set('X-XSS-Protection', '1; mode=block');
-        $response->headers->set('Referrer-Policy', 'strict-origin-when-cross-origin');
-        $response->headers->set('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+        $response->headers->set('X-Frame-Options', 'DENY');
+        $response->headers->set('Referrer-Policy', 'no-referrer');
+        $response->headers->set('Permissions-Policy', 'geolocation=(), microphone=(), camera=(), payment=(), usb=(), magnetometer=(), gyroscope=(), accelerometer=()');
 
         // HSTS (only in production with HTTPS)
         if (app()->environment('production') && $request->secure()) {

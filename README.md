@@ -230,6 +230,62 @@ docker compose exec queue-worker php artisan queue:work
 - Использовать HTTPS в production (push требует HTTPS)
 - Реализовать отправку WebPush из backend (TODO: уже сохранена подписка, отправка опциональна)
 
+## Мониторинг (Dev Profile)
+
+### Prometheus & Grafana
+
+Мониторинг доступен в профиле `dev`:
+
+```bash
+docker compose --profile dev up -d prometheus grafana
+```
+
+### Доступ
+
+- **Grafana**: http://localhost:3001
+  - Учетные данные по умолчанию: `admin` / `admin` (изменить через `GRAFANA_ADMIN_PASSWORD`)
+- **Prometheus**: http://localhost:9090
+
+### Метрики
+
+Приложение экспортирует метрики в формате Prometheus на `/api/metrics`. Prometheus настроен на сбор метрик каждые 15 секунд.
+
+### Grafana Dashboard
+
+Базовый dashboard автоматически подключается:
+- **Расположение**: Dashboards → PDO System Overview
+- **Ключевые метрики**:
+  - Request Rate (запросов/сек)
+  - Request Duration (p95, p50 latency)
+  - Error Rate (4xx, 5xx ошибки)
+  - Database Queries
+  - Active Users
+
+### Просмотр метрик
+
+1. **Открыть Grafana**: http://localhost:3001
+2. **Войти** с учетными данными admin
+3. **Перейти**: Dashboards → PDO System Overview
+4. **Ключевые панели**:
+   - **p95 Latency**: Статистика в правом верхнем углу показывает текущую p95 latency
+   - **Error Rate**: График в левом нижнем углу показывает 4xx и 5xx ошибки во времени
+   - **Request Duration**: График в правом верхнем углу показывает тренды p95 и p50 latency
+
+### Конфигурация
+
+- Prometheus config: `infra/prometheus/prometheus.yml`
+- Grafana datasource: `infra/grafana/provisioning/datasources/prometheus.yml`
+- Dashboards: `infra/grafana/dashboards/`
+
+### Переменные окружения
+
+```env
+PROMETHEUS_PORT=9090
+GRAFANA_PORT=3001
+GRAFANA_ADMIN_USER=admin
+GRAFANA_ADMIN_PASSWORD=admin
+```
+
 ## Acceptance Scenarios (Pack #6)
 
 Подробные acceptance сценарии для проверки функциональности:

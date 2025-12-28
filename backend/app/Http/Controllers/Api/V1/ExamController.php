@@ -297,6 +297,35 @@ class ExamController extends Controller
         ]);
 
         $result = ExamResult::updateOrCreate(
+            [
+                'exam_id' => $id,
+                'student_user_id' => $validated['student_user_id'],
+            ],
+            [
+                'score' => $validated['score'] ?? null,
+                'grade_value' => $validated['grade_value'] ?? null,
+                'comment' => $validated['comment'] ?? null,
+            ]
+        );
+
+        // Record timeline event
+        $timelineService = app(\App\Services\StudentTimelineService::class);
+        $timelineService->record('exam.result', $validated['student_user_id'], [
+            'title' => "Результат экзамена: {$exam->title}",
+            'description' => $validated['grade_value'] ? "Оценка: {$validated['grade_value']}" : ($validated['score'] ? "Балл: {$validated['score']}" : null),
+            'related_entity_type' => \App\Models\ExamResult::class,
+            'related_entity_id' => $result->id,
+            'payload' => [
+                'exam_id' => $exam->id,
+                'exam_title' => $exam->title,
+                'grade_value' => $validated['grade_value'],
+                'score' => $validated['score'],
+                'comment' => $validated['comment'],
+            ],
+            'event_date' => $exam->date_at ?? now(),
+        ]);
+
+        return response()->json($result->load('student'));
             ['exam_id' => $id, 'student_user_id' => $validated['student_user_id']],
             [
                 'score' => $validated['score'] ?? null,

@@ -46,5 +46,10 @@ class Grade extends Model
     {
         return $this->hasMany(GradeChange::class);
     }
+
+    public function timeline()
+    {
+        return $this->morphOne(StudentTimeline::class, 'entity', 'entity_type', 'entity_id');
+    }
 }
 

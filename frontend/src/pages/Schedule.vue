@@ -38,6 +38,7 @@
             prepend-icon="mdi-plus"
             @click="showCreateDialog = true"
             :loading="processing"
+            :disabled="readOnly.isEnabled"
           >
             Создать черновик
           </v-btn>
@@ -47,6 +48,7 @@
             prepend-icon="mdi-publish"
             @click="publishVersion"
             :loading="processing"
+            :disabled="readOnly.isEnabled"
           >
             Опубликовать
           </v-btn>
@@ -56,6 +58,7 @@
             prepend-icon="mdi-archive"
             @click="archiveVersion"
             :loading="processing"
+            :disabled="readOnly.isEnabled"
           >
             Архивировать
           </v-btn>
@@ -139,6 +142,7 @@ import { scheduleApi, type ScheduleVersionDTO } from '../api/schedule'
 import { referencesApi } from '../api/references'
 import { printApi } from '../api/print'
 import { useAuthStore } from '../stores/auth'
+import { useReadOnlyStore } from '../stores/readOnly'
 import { useToast } from '../composables/useToast'
 import ScheduleGrid from '../components/ScheduleGrid.vue'
 import ScheduleChangelog from '../components/ScheduleChangelog.vue'
@@ -147,6 +151,7 @@ import ScheduleCompare from '../components/ScheduleCompare.vue'
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+const readOnly = useReadOnlyStore()
 const { showToast } = useToast()
 
 const activeTab = ref('schedule')

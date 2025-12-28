@@ -3,6 +3,7 @@ import { createPinia } from 'pinia'
 import App from './App.vue'
 import router from '../router'
 import { vuetify } from '../plugins/vuetify'
+import { i18n } from '../i18n'
 import { useAuthStore } from '../stores/auth'
 import { useWsStore } from '../stores/ws'
 import { can, canAny, canAll, hasRole, hasAnyRole } from '../helpers/permissions'
@@ -14,6 +15,7 @@ export function bootstrap() {
   app.use(pinia)
   app.use(router)
   app.use(vuetify)
+  app.use(i18n)
 
   // Make permission helpers available globally
   app.config.globalProperties.$can = can
