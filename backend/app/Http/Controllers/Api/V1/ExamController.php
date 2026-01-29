@@ -3,402 +3,354 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
-use App\Models\Exam;
-use App\Models\ExamCommission;
-use App\Models\ExamRegistration;
-use App\Models\ExamResult;
-use App\Models\ExamRule;
-use App\Models\Document;
-use App\Models\Group;
-use App\Models\User;
-use Illuminate\Support\Facades\Log;
-use App\Services\NotificationService;
-use App\Http\Controllers\Api\V1\WebhookController;
-use App\Support\Events\EventTypes;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Validator;
 
 class ExamController extends Controller
 {
-    public function __construct(
-        private NotificationService $notificationService
-    ) {}
-
     public function index(Request $request): JsonResponse
     {
-        $query = Exam::with(['subject', 'group', 'term', 'room', 'creator']);
-
-        if ($termId = $request->query('termId')) {
-            $query->where('term_id', $termId);
-        }
-        if ($groupId = $request->query('groupId')) {
-            $query->where('group_id', $groupId);
-        }
-        if ($subjectId = $request->query('subjectId')) {
-            $query->where('subject_id', $subjectId);
-        }
-        if ($type = $request->query('type')) {
-            $query->where('type', $type);
-        }
-        if ($from = $request->query('from')) {
-            $query->where('date_at', '>=', $from);
-        }
-        if ($to = $request->query('to')) {
-            $query->where('date_at', '<=', $to);
-        }
-
-        $exams = $query->orderBy('date_at')->paginate($request->integer('per_page', 20));
-
-        return response()->json($exams);
+        $tenantId = (int) auth()->user()->tenant_id;
+        $q = DB::table('exams')
+            ->when(Schema::hasColumn('exams', 'tenant_id'), fn ($q) => $q->where('tenant_id', $tenantId))
+            ->orderBy('date_at');
+        $items = $q->get();
+        return response()->json(['data' => $items]);
     }
 
     public function store(Request $request): JsonResponse
     {
-        $validated = $request->validate([
-            'term_id' => ['required', 'integer', 'exists:terms,id'],
-            'type' => ['required', 'in:exam,test,attestation'],
-            'title' => ['required', 'string', 'max:255'],
-            'subject_id' => ['nullable', 'integer', 'exists:subjects,id'],
-            'group_id' => ['nullable', 'integer', 'exists:groups,id'],
-            'date_at' => ['required', 'date'],
-            'room_id' => ['nullable', 'integer', 'exists:rooms,id'],
+        $v = Validator::make($request->all(), [
+            'term_id' => 'required|exists:terms,id',
+            'type' => 'required|in:exam,test,attestation',
+            'title' => 'required|string|max:255',
+            'subject_id' => 'nullable|exists:subjects,id',
+            'group_id' => 'nullable|exists:groups,id',
+            'date_at' => 'required|date',
+            'room_id' => 'nullable|exists:rooms,id',
         ]);
-
-        $exam = Exam::create([
-            ...$validated,
+        if ($v->fails()) {
+            return response()->json(['message' => 'Validation errors', 'errors' => $v->errors()], 422);
+        }
+        $payload = [
+            'term_id' => $request->term_id,
+            'type' => $request->type,
+            'title' => $request->title,
+            'subject_id' => $request->subject_id,
+            'group_id' => $request->group_id,
+            'date_at' => $request->date_at,
+            'room_id' => $request->room_id,
             'created_by' => auth()->id(),
-        ]);
-
-        // Trigger webhook
-        WebhookController::trigger(EventTypes::EXAM_CREATED, [
-            'exam_id' => $exam->id,
-            'title' => $exam->title,
-            'date_at' => $exam->date_at,
-        ]);
-
-        return response()->json($exam->load(['subject', 'group', 'term', 'room', 'creator']), 201);
+            'created_at' => now(),
+            'updated_at' => now(),
+        ];
+        if (Schema::hasColumn('exams', 'tenant_id')) {
+            $payload['tenant_id'] = (int) auth()->user()->tenant_id;
+        }
+        $id = DB::table('exams')->insertGetId($payload);
+        $row = DB::table('exams')->where('id', $id)->first();
+        return response()->json(['data' => $row], 201);
     }
 
-    public function show(int $id): JsonResponse
+    public function show(Request $request, $id): JsonResponse
     {
-        $exam = Exam::with([
-            'subject', 'group', 'term', 'room', 'creator',
-            'commissions.user', 'registrations.student', 'results.student'
-        ])->findOrFail($id);
-
-        return response()->json($exam);
+        $tenantId = (int) auth()->user()->tenant_id;
+        $e = $this->exam($id, $tenantId);
+        if (!$e) {
+            return response()->json(['message' => 'Exam not found'], 404);
+        }
+        return response()->json(['data' => $e]);
     }
 
-    public function update(Request $request, int $id): JsonResponse
+    public function update(Request $request, $id): JsonResponse
     {
-        $exam = Exam::findOrFail($id);
-        $this->authorize('update', $exam);
-
-        $validated = $request->validate([
-            'title' => ['sometimes', 'string', 'max:255'],
-            'subject_id' => ['nullable', 'integer', 'exists:subjects,id'],
-            'group_id' => ['nullable', 'integer', 'exists:groups,id'],
-            'date_at' => ['sometimes', 'date'],
-            'room_id' => ['nullable', 'integer', 'exists:rooms,id'],
+        $v = Validator::make($request->all(), [
+            'term_id' => 'sometimes|exists:terms,id',
+            'type' => 'sometimes|in:exam,test,attestation',
+            'title' => 'sometimes|string|max:255',
+            'subject_id' => 'nullable|exists:subjects,id',
+            'group_id' => 'nullable|exists:groups,id',
+            'date_at' => 'sometimes|date',
+            'room_id' => 'nullable|exists:rooms,id',
         ]);
-
-        $exam->update($validated);
-
-        WebhookController::trigger(EventTypes::EXAM_UPDATED, [
-            'exam_id' => $exam->id,
-            'title' => $exam->title,
-        ]);
-
-        return response()->json($exam->load(['subject', 'group', 'term', 'room', 'creator']));
+        if ($v->fails()) {
+            return response()->json(['message' => 'Validation errors', 'errors' => $v->errors()], 422);
+        }
+        $tenantId = (int) auth()->user()->tenant_id;
+        $e = $this->exam($id, $tenantId);
+        if (!$e) {
+            return response()->json(['message' => 'Exam not found'], 404);
+        }
+        $upd = array_filter([
+            'term_id' => $request->term_id,
+            'type' => $request->type,
+            'title' => $request->title,
+            'subject_id' => $request->subject_id,
+            'group_id' => $request->group_id,
+            'date_at' => $request->date_at,
+            'room_id' => $request->room_id,
+        ], fn ($x) => $x !== null);
+        $upd['updated_at'] = now();
+        DB::table('exams')->where('id', $id)->update($upd);
+        return response()->json(['data' => DB::table('exams')->where('id', $id)->first()]);
     }
 
-    public function destroy(int $id): JsonResponse
+    public function destroy(Request $request, $id): JsonResponse
     {
-        $exam = Exam::findOrFail($id);
-        $this->authorize('delete', $exam);
-
-        $exam->delete();
-
-        return response()->json(['message' => 'Exam deleted']);
+        $tenantId = (int) auth()->user()->tenant_id;
+        $e = $this->exam($id, $tenantId);
+        if (!$e) {
+            return response()->json(['message' => 'Exam not found'], 404);
+        }
+        DB::table('exams')->where('id', $id)->delete();
+        return response()->json(['message' => 'Deleted']);
     }
 
-    public function setCommission(Request $request, int $id): JsonResponse
+    public function setCommission(Request $request, $id): JsonResponse
     {
-        $exam = Exam::findOrFail($id);
-        $this->authorize('update', $exam);
-
-        $validated = $request->validate([
-            'members' => ['required', 'array'],
-            'members.*.user_id' => ['required', 'integer', 'exists:users,id'],
-            'members.*.role' => ['required', 'in:chair,member'],
+        $v = Validator::make($request->all(), [
+            'members' => 'required|array|min:1',
+            'members.*.user_id' => 'required|exists:users,id',
+            'members.*.role' => 'required|in:chair,member',
         ]);
-
-        // Remove existing commission
-        ExamCommission::where('exam_id', $id)->delete();
-
-        // Create new members
-        $members = [];
-        foreach ($validated['members'] as $member) {
-            $members[] = ExamCommission::create([
+        if ($v->fails()) {
+            return response()->json(['message' => 'Validation errors', 'errors' => $v->errors()], 422);
+        }
+        $tenantId = (int) auth()->user()->tenant_id;
+        $e = $this->exam($id, $tenantId);
+        if (!$e) {
+            return response()->json(['message' => 'Exam not found'], 404);
+        }
+        DB::table('exam_commissions')->where('exam_id', $id)->delete();
+        foreach ($request->members as $m) {
+            DB::table('exam_commissions')->insert([
                 'exam_id' => $id,
-                'user_id' => $member['user_id'],
-                'role' => $member['role'],
-            ])->load('user');
+                'user_id' => $m['user_id'],
+                'role' => $m['role'],
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
         }
-
-        return response()->json(['members' => $members]);
+        return response()->json(['message' => 'OK']);
     }
 
-    public function getCommission(int $id): JsonResponse
+    public function getCommission(Request $request, $id): JsonResponse
     {
-        $exam = Exam::findOrFail($id);
-        $this->authorize('view', $exam);
-
-        $members = ExamCommission::where('exam_id', $id)
-            ->with('user')
-            ->get();
-
-        return response()->json(['members' => $members]);
+        $tenantId = (int) auth()->user()->tenant_id;
+        $e = $this->exam($id, $tenantId);
+        if (!$e) {
+            return response()->json(['message' => 'Exam not found'], 404);
+        }
+        $items = DB::table('exam_commissions')->where('exam_id', $id)->get();
+        return response()->json(['data' => $items]);
     }
 
-    public function seedRegistrations(int $id): JsonResponse
+    public function seedRegistrations(Request $request, $id): JsonResponse
     {
-        $exam = Exam::findOrFail($id);
-        $this->authorize('update', $exam);
-
-        if (!$exam->group_id) {
-            return response()->json(['message' => 'Exam must have group_id'], 400);
+        $tenantId = (int) auth()->user()->tenant_id;
+        $e = $this->exam($id, $tenantId);
+        if (!$e) {
+            return response()->json(['message' => 'Exam not found'], 404);
         }
-
-        $group = Group::findOrFail($exam->group_id);
-        // Get students from group_members table
-        $studentIds = DB::table('group_members')
-            ->where('group_id', $exam->group_id)
+        if (!$e->group_id) {
+            return response()->json(['message' => 'Exam has no group'], 422);
+        }
+        $students = DB::table('group_members')
+            ->where('group_id', $e->group_id)
+            ->where('role_in_group', 'student')
             ->pluck('user_id');
-        
-        $students = User::whereIn('id', $studentIds)
-            ->whereHas('roles', function ($q) {
-                $q->where('name', 'student');
-            })
-            ->get();
-
         $created = 0;
-        foreach ($students as $student) {
-            ExamRegistration::firstOrCreate(
-                ['exam_id' => $id, 'student_user_id' => $student->id],
-                ['status' => 'registered']
-            );
-            $created++;
+        foreach ($students as $uid) {
+            $ins = DB::table('exam_registrations')->insertOrIgnore([
+                'exam_id' => $id,
+                'student_user_id' => $uid,
+                'status' => 'registered',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+            if ($ins) {
+                $created++;
+            }
+            DB::table('exam_admissions')->insertOrIgnore([
+                'exam_id' => $id,
+                'user_id' => $uid,
+                'status' => 'pending',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
         }
-
-        return response()->json(['message' => "Created {$created} registrations"]);
+        return response()->json(['message' => "Seeded {$created} registrations", 'created' => $created]);
     }
 
-    public function evaluateAdmission(int $id, int $studentId): JsonResponse
+    public function evaluateAdmission(Request $request, $id, $studentId): JsonResponse
     {
-        $exam = Exam::with('term')->findOrFail($id);
-        $this->authorize('update', $exam);
-
-        $student = User::findOrFail($studentId);
-        $registration = ExamRegistration::where('exam_id', $id)
+        $v = Validator::make($request->all(), [
+            'status' => 'required|in:admitted,not_admitted',
+            'reason' => 'nullable|string|max:65535',
+        ]);
+        if ($v->fails()) {
+            return response()->json(['message' => 'Validation errors', 'errors' => $v->errors()], 422);
+        }
+        $tenantId = (int) auth()->user()->tenant_id;
+        $userId = (int) auth()->id();
+        $e = $this->exam($id, $tenantId);
+        if (!$e) {
+            return response()->json(['message' => 'Exam not found'], 404);
+        }
+        $n = DB::table('exam_admissions')
+            ->where('exam_id', $id)
+            ->where('user_id', $studentId)
+            ->update([
+                'status' => $request->status,
+                'reason' => $request->reason,
+                'decided_by' => $userId,
+                'decided_at' => now(),
+                'updated_at' => now(),
+            ]);
+        if ($n === 0) {
+            return response()->json(['message' => 'Admission record not found'], 404);
+        }
+        $regStatus = $request->status === 'admitted' ? 'admitted' : 'not_admitted';
+        DB::table('exam_registrations')
+            ->where('exam_id', $id)
             ->where('student_user_id', $studentId)
-            ->firstOrFail();
+            ->update(['status' => $regStatus, 'reason' => $request->reason, 'updated_at' => now()]);
+        return response()->json(['message' => 'OK']);
+    }
 
-        // Get rules
-        $rule = ExamRule::where('term_id', $exam->term_id)->first();
-        $config = $rule?->config_json ?? [
-            'max_debts' => 3,
-            'max_absences' => 20,
-            'min_avg' => 3.0,
-        ];
-
-        // Calculate debts (TODO: from analytics or assignments)
-        $debts = 0; // Placeholder
-        // $debts = count of overdue assignments
-
-        // Calculate absences (last 30 days or term)
-        $absences = DB::table('attendance')
-            ->where('user_id', $studentId)
-            ->where('status', 'absent')
-            ->where('created_at', '>=', now()->subDays(30))
-            ->count();
-
-        // Calculate average grade for term
-        $avgGrade = DB::table('grades')
-            ->where('user_id', $studentId)
-            ->where('term_id', $exam->term_id)
-            ->avg('value') ?? 0;
-
-        $status = 'admitted';
-        $reasons = [];
-
-        if ($debts > ($config['max_debts'] ?? 3)) {
-            $status = 'not_admitted';
-            $reasons[] = "Превышено количество долгов: {$debts}";
+    public function admissionReport(Request $request, $id): JsonResponse
+    {
+        $tenantId = (int) auth()->user()->tenant_id;
+        $e = $this->exam($id, $tenantId);
+        if (!$e) {
+            return response()->json(['message' => 'Exam not found'], 404);
         }
+        $items = DB::table('exam_admissions')->where('exam_id', $id)->get();
+        return response()->json(['data' => $items]);
+    }
 
-        if ($absences > ($config['max_absences'] ?? 20)) {
-            $status = 'not_admitted';
-            $reasons[] = "Превышено количество пропусков: {$absences}";
+    public function setResult(Request $request, $id): JsonResponse
+    {
+        $v = Validator::make($request->all(), [
+            'results' => 'required|array|min:1',
+            'results.*.student_user_id' => 'required|exists:users,id',
+            'results.*.score' => 'nullable|numeric',
+            'results.*.grade_value' => 'nullable|integer|min:0',
+            'results.*.comment' => 'nullable|string|max:65535',
+        ]);
+        if ($v->fails()) {
+            return response()->json(['message' => 'Validation errors', 'errors' => $v->errors()], 422);
         }
-
-        if ($avgGrade < ($config['min_avg'] ?? 3.0)) {
-            $status = 'not_admitted';
-            $reasons[] = "Средний балл ниже порога: {$avgGrade}";
+        $tenantId = (int) auth()->user()->tenant_id;
+        $userId = (int) auth()->id();
+        $e = $this->exam($id, $tenantId);
+        if (!$e) {
+            return response()->json(['message' => 'Exam not found'], 404);
         }
-
-        $registration->update([
-            'status' => $status,
-            'reason' => !empty($reasons) ? implode('; ', $reasons) : null,
-        ]);
-
-        return response()->json([
-            'status' => $status,
-            'reason' => $registration->reason,
-            'metrics' => [
-                'debts' => $debts,
-                'absences' => $absences,
-                'avg_grade' => round($avgGrade, 2),
-            ],
-        ]);
+        foreach ($request->results as $r) {
+            $sid = $r['student_user_id'];
+            $upd = [
+                'score' => $r['score'] ?? null,
+                'grade_value' => $r['grade_value'] ?? null,
+                'comment' => $r['comment'] ?? null,
+                'created_by' => $userId,
+                'updated_at' => now(),
+            ];
+            $exists = DB::table('exam_results')->where('exam_id', $id)->where('student_user_id', $sid)->exists();
+            if ($exists) {
+                DB::table('exam_results')
+                    ->where('exam_id', $id)
+                    ->where('student_user_id', $sid)
+                    ->update($upd);
+            } else {
+                $upd['exam_id'] = $id;
+                $upd['student_user_id'] = $sid;
+                $upd['created_at'] = now();
+                DB::table('exam_results')->insert($upd);
+            }
+            $regStatus = isset($r['grade_value']) || isset($r['score']) ? 'passed' : 'registered';
+            DB::table('exam_registrations')
+                ->where('exam_id', $id)
+                ->where('student_user_id', $sid)
+                ->update(['status' => $regStatus, 'updated_at' => now()]);
+        }
+        return response()->json(['message' => 'OK']);
     }
 
-    public function admissionReport(int $id): JsonResponse
+    public function getResults(Request $request, $id): JsonResponse
     {
-        $exam = Exam::findOrFail($id);
-        $this->authorize('view', $exam);
-
-        $registrations = ExamRegistration::where('exam_id', $id)
-            ->with('student')
-            ->get()
-            ->map(function ($reg) {
-                return [
-                    'student_id' => $reg->student_user_id,
-                    'student_fio' => $reg->student->fio ?? '',
-                    'status' => $reg->status,
-                    'reason' => $reg->reason,
-                ];
-            });
-
-        return response()->json(['registrations' => $registrations]);
+        $tenantId = (int) auth()->user()->tenant_id;
+        $e = $this->exam($id, $tenantId);
+        if (!$e) {
+            return response()->json(['message' => 'Exam not found'], 404);
+        }
+        $items = DB::table('exam_results')->where('exam_id', $id)->get();
+        return response()->json(['data' => $items]);
     }
 
-    public function setResult(Request $request, int $id): JsonResponse
+    public function generateSheet(Request $request, $id): JsonResponse
     {
-        $exam = Exam::findOrFail($id);
-        $this->authorize('updateResult', $exam);
-
-        $validated = $request->validate([
-            'student_user_id' => ['required', 'integer', 'exists:users,id'],
-            'score' => ['nullable', 'numeric', 'min:0', 'max:100'],
-            'grade_value' => ['nullable', 'integer', 'min:2', 'max:5'],
-            'comment' => ['nullable', 'string'],
-        ]);
-
-        $result = ExamResult::updateOrCreate(
-            ['exam_id' => $id, 'student_user_id' => $validated['student_user_id']],
-            [
-                'score' => $validated['score'] ?? null,
-                'grade_value' => $validated['grade_value'] ?? null,
-                'comment' => $validated['comment'] ?? null,
-                'created_by' => auth()->id(),
-            ]
-        );
-
-        return response()->json($result->load(['student', 'creator']));
-    }
-
-    public function getResults(int $id): JsonResponse
-    {
-        $exam = Exam::findOrFail($id);
-        $this->authorize('view', $exam);
-
-        $results = ExamResult::where('exam_id', $id)
-            ->with(['student', 'creator'])
-            ->get();
-
-        return response()->json(['results' => $results]);
-    }
-
-    public function getRules(int $termId): JsonResponse
-    {
-        $rule = ExamRule::where('term_id', $termId)->first();
-
-        return response()->json($rule ?? ['term_id' => $termId, 'config_json' => []]);
-    }
-
-    public function setRules(Request $request, int $termId): JsonResponse
-    {
-        $this->authorize('exams.manage');
-
-        $validated = $request->validate([
-            'config_json' => ['required', 'array'],
-            'config_json.max_debts' => ['nullable', 'integer', 'min:0'],
-            'config_json.max_absences' => ['nullable', 'integer', 'min:0'],
-            'config_json.min_avg' => ['nullable', 'numeric', 'min:0', 'max:5'],
-        ]);
-
-        $rule = ExamRule::updateOrCreate(
-            ['term_id' => $termId],
-            ['config_json' => $validated['config_json']]
-        );
-
-        return response()->json($rule);
-    }
-
-    public function generateSheet(int $id): JsonResponse
-    {
-        $exam = Exam::with([
-            'subject', 'group', 'term', 'room', 'creator',
-            'commissions.user', 'registrations.student', 'results.student'
-        ])->findOrFail($id);
-
-        $this->authorize('update', $exam);
-
-        // TODO: Get template for grade_sheet
-        $template = null; // DocumentTemplate::where('type', 'grade_sheet')->first();
-
-        $dataJson = [
-            'exam' => [
-                'id' => $exam->id,
-                'title' => $exam->title,
-                'type' => $exam->type,
-                'date_at' => $exam->date_at,
-                'subject' => $exam->subject?->name,
-                'group' => $exam->group?->name,
-                'room' => $exam->room?->name,
-            ],
-            'commission' => $exam->commissions->map(function ($c) {
-                return [
-                    'user_id' => $c->user_id,
-                    'fio' => $c->user->fio ?? '',
-                    'role' => $c->role,
-                ];
-            }),
-            'students' => $exam->registrations->map(function ($reg) use ($exam) {
-                $result = $exam->results->firstWhere('student_user_id', $reg->student_user_id);
-                return [
-                    'student_id' => $reg->student_user_id,
-                    'fio' => $reg->student->fio ?? '',
-                    'status' => $reg->status,
-                    'score' => $result?->score,
-                    'grade_value' => $result?->grade_value,
-                    'comment' => $result?->comment,
-                ];
-            }),
-        ];
-
-        $document = Document::create([
-            'template_id' => $template?->id,
-            'type' => 'grade_sheet',
-            'title' => "Ведомость: {$exam->title}",
-            'data_json' => $dataJson,
-            'status' => 'draft',
+        $tenantId = (int) auth()->user()->tenant_id;
+        $e = $this->exam($id, $tenantId);
+        if (!$e) {
+            return response()->json(['message' => 'Exam not found'], 404);
+        }
+        $results = DB::table('exam_results')->where('exam_id', $id)->get();
+        $grades = $results->mapWithKeys(fn ($r) => [(string) $r->student_user_id => $r->grade_value ?? $r->score])->all();
+        $stmtId = DB::table('exam_statements')->insertGetId([
+            'exam_id' => $id,
+            'document_id' => null,
+            'grades' => json_encode($grades),
             'created_by' => auth()->id(),
+            'created_at' => now(),
+            'updated_at' => now(),
         ]);
+        $row = DB::table('exam_statements')->where('id', $stmtId)->first();
+        return response()->json(['data' => $row]);
+    }
 
-        return response()->json(['document_id' => $document->id, 'document' => $document]);
+    public function getRules(Request $request, $termId): JsonResponse
+    {
+        $tenantId = (int) auth()->user()->tenant_id;
+        $row = DB::table('exam_rules')->where('term_id', $termId)->first();
+        return response()->json(['data' => $row]);
+    }
+
+    public function setRules(Request $request, $termId): JsonResponse
+    {
+        $v = Validator::make($request->all(), [
+            'config_json' => 'required|array',
+        ]);
+        if ($v->fails()) {
+            return response()->json(['message' => 'Validation errors', 'errors' => $v->errors()], 422);
+        }
+        $exists = DB::table('exam_rules')->where('term_id', $termId)->exists();
+        if ($exists) {
+            DB::table('exam_rules')->where('term_id', $termId)->update([
+                'config_json' => json_encode($request->config_json),
+                'updated_at' => now(),
+            ]);
+        } else {
+            DB::table('exam_rules')->insert([
+                'term_id' => $termId,
+                'config_json' => json_encode($request->config_json),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
+        $row = DB::table('exam_rules')->where('term_id', $termId)->first();
+        return response()->json(['data' => $row]);
+    }
+
+    private function exam($id, int $tenantId): ?object
+    {
+        $q = DB::table('exams')->where('id', $id);
+        if (Schema::hasColumn('exams', 'tenant_id')) {
+            $q->where('tenant_id', $tenantId);
+        }
+        return $q->first();
     }
 }
-

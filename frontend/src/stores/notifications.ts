@@ -71,6 +71,11 @@ export const useNotificationsStore = defineStore('notifications', {
       }))
     },
 
+    async delete(id: number) {
+      await notificationsApi.delete(id)
+      this.items = this.items.filter((n) => n.id !== id)
+    },
+
     /** Добавить уведомление, полученное по WS (payload.payload == NotificationDTO) */
     addFromRealtime(dto: { payload: NotificationItemDTO }) {
       const notif = dto.payload

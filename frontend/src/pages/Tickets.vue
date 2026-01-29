@@ -165,7 +165,6 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ticketsApi, type TicketDTO } from '../api/tickets'
 import SlaTimer from '../components/SlaTimer.vue'
-import FileUploader from '../components/FileUploader.vue'
 
 const router = useRouter()
 

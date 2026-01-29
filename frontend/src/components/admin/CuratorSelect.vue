@@ -1,6 +1,6 @@
 <template>
   <v-select
-    v-model="modelValue"
+    :model-value="modelValue"
     :items="curatorOptions"
     :label="label"
     :rules="rules"
@@ -22,7 +22,7 @@ interface Props {
   rules?: any[]
 }
 
-const props = withDefaults(defineProps<Props>(), {
+withDefaults(defineProps<Props>(), {
   label: 'Куратор',
   rules: () => [],
 })
@@ -54,5 +54,12 @@ onMounted(() => {
   loadCurators()
 })
 </script>
+
+
+
+
+
+
+
 
 

@@ -76,7 +76,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useCrudTable } from '../../composables/useCrudTable'
 import type { RoomDTO } from '../../api/directory'
 import DataTable from '../../components/admin/DataTable.vue'

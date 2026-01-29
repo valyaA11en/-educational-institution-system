@@ -32,7 +32,17 @@
         <v-window v-model="activeTab">
           <!-- Данные -->
           <v-window-item value="data">
-            <v-card variant="outlined" class="mt-4">
+            <!-- Форма ГОСТ для order/decision -->
+            <GostDocumentForm
+              v-if="isGostDocument && document.status === 'draft'"
+              :document-id="document.id"
+              :initial-data="gostFormData"
+              @saved="handleGostFormSaved"
+              @cancel="handleGostFormCancel"
+              class="mt-4"
+            />
+            <!-- JSON редактор для других типов или не-draft статусов -->
+            <v-card v-else variant="outlined" class="mt-4">
               <v-card-title class="text-subtitle-1">Редактирование данных</v-card-title>
               <v-card-text>
                 <v-form v-if="document.status === 'draft'">
@@ -351,13 +361,13 @@
       </v-card>
     </v-dialog>
 
-    <v-card v-else-if="loading">
+    <v-card v-if="!document && loading">
       <v-card-text>
         <v-progress-linear indeterminate />
       </v-card-text>
     </v-card>
 
-    <v-card v-else>
+    <v-card v-if="!document && !loading">
       <v-card-text>
         <v-alert type="error">Документ не найден</v-alert>
       </v-card-text>
@@ -367,15 +377,15 @@
 
 <script setup lang="ts">
 import { ref, onMounted, computed, onUnmounted } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { documentsApi, type DocumentDTO } from '../api/documents'
 import { rolesApi } from '../api/roles'
 import { usersApi } from '../api/users'
-import { useRealtime } from '../composables/useRealtime'
+import { useEcho } from '../composables/useEcho'
 import { useToast } from '../composables/useToast'
+import GostDocumentForm from '../components/GostDocumentForm.vue'
 
 const route = useRoute()
-const router = useRouter()
 const loading = ref(false)
 const document = ref<DocumentDTO | null>(null)
 const processing = ref(false)
@@ -397,11 +407,7 @@ const showAckTargetsDialog = ref(false)
 const ackUserIds = ref<number[]>([])
 
 const echo = useEcho()
-
-const showToast = (message: string, type: 'success' | 'error' | 'info' | 'warning' = 'info') => {
-  // TODO: integrate with Vuetify snackbar
-  console.log(`[${type}] ${message}`)
-}
+const { showToast } = useToast()
 
 const canApprove = computed(() => {
   if (!document.value || document.value.status !== 'on_review') return false
@@ -618,12 +624,12 @@ const exportDocument = async (format: 'docx' | 'pdf') => {
   try {
     const blob = await documentsApi.export(document.value.id, format)
     const url = window.URL.createObjectURL(blob)
-    const link = document.createElement('a')
+    const link = document.value.createElement('a')
     link.href = url
     link.download = `document_${document.value.number || document.value.id}.${format}`
-    document.body.appendChild(link)
+    document.value.body.appendChild(link)
     link.click()
-    document.body.removeChild(link)
+    document.value.body.removeChild(link)
     window.URL.revokeObjectURL(url)
   } catch (error: any) {
     console.error('Failed to export document:', error)
@@ -674,10 +680,6 @@ const formatValue = (value: any) => {
   return String(value)
 }
 
-const formatDate = (date: string) => {
-  return new Date(date).toLocaleDateString('ru-RU')
-}
-
 const formatDateTime = (date: string) => {
   return new Date(date).toLocaleString('ru-RU')
 }
@@ -704,6 +706,34 @@ const getStatusText = (status: string) => {
   return texts[status] || status
 }
 
+const isGostDocument = computed(() => {
+  return document.value && ['order', 'decision', 'приказ', 'распоряжение'].includes(document.value.type)
+})
+
+const gostFormData = computed(() => {
+  if (!document.value?.data_json) return undefined
+  const data = document.value.data_json
+  return {
+    org_name: data.org_name || '',
+    title: data.title || '',
+    basis: data.basis || '',
+    body_items: Array.isArray(data.body_items) ? data.body_items : [],
+    signer_name: data.signer_name || '',
+    signer_role: data.signer_role || '',
+    appendix: data.appendix || '',
+    recipients: Array.isArray(data.recipients) ? data.recipients : [],
+  }
+})
+
+const handleGostFormSaved = async () => {
+  await loadDocument()
+}
+
+const handleGostFormCancel = () => {
+  // Просто перезагружаем документ, чтобы вернуться к исходным данным
+  loadDocument()
+}
+
 onMounted(async () => {
   await loadDocument()
   await loadRoles()
@@ -712,7 +742,7 @@ onMounted(async () => {
   // Subscribe to document status changes
   if (document.value && echo) {
     echo.private(`document.${document.value.id}`)
-      .listen('.document.status_changed', (event: any) => {
+      .listen('.document.status_changed', () => {
         showToast('Статус документа изменен', 'info')
         loadDocument()
       })

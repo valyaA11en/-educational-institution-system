@@ -28,3 +28,9 @@ class CertificateTemplateSeeder extends Seeder
     }
 }
 
+
+
+
+
+
+

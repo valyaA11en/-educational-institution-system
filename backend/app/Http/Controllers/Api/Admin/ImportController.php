@@ -3,276 +3,429 @@
 namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
-use App\Models\Group;
-use App\Models\Role;
-use App\Models\ScheduleItem;
-use App\Models\ScheduleVersion;
-use App\Models\Subject;
-use App\Models\TimeSlot;
 use App\Models\User;
+use App\Models\Group;
+use App\Models\Subject;
+use App\Models\Room;
+use App\Models\TimeSlot;
+use App\Models\Subgroup;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
-use Maatwebsite\Excel\Facades\Excel;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
+use Carbon\Carbon;
 
 class ImportController extends Controller
 {
+    /**
+     * Import users from CSV/JSON
+     */
     public function importUsers(Request $request): JsonResponse
     {
-        $request->validate([
-            'file' => ['required', 'file', 'mimes:xlsx,xls', 'max:10240'],
+        $validator = Validator::make($request->all(), [
+            'data' => 'required|array',
+            'data.*.fio' => 'required|string',
+            'data.*.email' => 'nullable|email',
+            'data.*.phone' => 'nullable|string',
+            'data.*.password' => 'nullable|string|min:8',
+            'data.*.status' => 'nullable|in:active,blocked',
+            'data.*.role_ids' => 'nullable|array',
         ]);
 
-        $file = $request->file('file');
-        $data = Excel::toArray([], $file);
-
-        if (empty($data) || empty($data[0])) {
-            return response()->json(['message' => 'Файл пуст'], 400);
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation errors',
+                'errors' => $validator->errors()
+            ], 422);
         }
 
-        $rows = $data[0];
-        // Skip header row
-        $headerRow = array_shift($rows);
-        
+        $imported = 0;
         $errors = [];
-        $successCount = 0;
 
-        DB::beginTransaction();
         try {
-            foreach ($rows as $index => $row) {
-                $rowNumber = $index + 2; // +2 because of header row and 0-based index
+            DB::beginTransaction();
 
-                // Convert numeric array to associative array
-                $rowData = [
-                    'fio' => $row[0] ?? '',
-                    'email' => $row[1] ?? '',
-                    'phone' => $row[2] ?? '',
-                    'role' => $row[3] ?? '',
-                    'group' => $row[4] ?? '',
-                ];
+            foreach ($request->data as $index => $userData) {
+                try {
+                    // Generate password if not provided
+                    $password = $userData['password'] ?? Str::random(12);
 
-                $validator = Validator::make($rowData, [
-                    'fio' => ['required', 'string', 'max:255'],
-                    'email' => ['nullable', 'email', 'max:255', 'unique:users,email'],
-                    'phone' => ['nullable', 'string', 'max:20'],
-                    'role' => ['required', 'string'],
-                    'group' => ['nullable', 'string'],
-                ]);
+                    $user = User::create([
+                        'fio' => $userData['fio'],
+                        'email' => $userData['email'] ?? null,
+                        'phone' => $userData['phone'] ?? null,
+                        'password_hash' => Hash::make($password),
+                        'status' => $userData['status'] ?? 'active',
+                        'tenant_id' => auth()->user()->tenant_id,
+                    ]);
 
-                if ($validator->fails()) {
-                    $errors[] = [
-                        'row' => $rowNumber,
-                        'errors' => $validator->errors()->toArray(),
-                    ];
-                    continue;
-                }
-
-                // Find or create role
-                $role = Role::where('name', $rowData['role'])->first();
-                if (!$role) {
-                    $errors[] = [
-                        'row' => $rowNumber,
-                        'errors' => ['role' => ['Роль не найдена: ' . $rowData['role']]],
-                    ];
-                    continue;
-                }
-
-                // Create user
-                $user = User::create([
-                    'fio' => $rowData['fio'],
-                    'email' => $rowData['email'] ?: null,
-                    'phone' => $rowData['phone'] ?: null,
-                    'password_hash' => Hash::make('password'), // Default password
-                    'status' => 'active',
-                ]);
-
-                // Assign role
-                $user->roles()->attach($role->id);
-
-                // Add to group if specified
-                if (!empty($rowData['group'])) {
-                    $group = Group::where('name', $rowData['group'])->first();
-                    if ($group) {
-                        $user->groups()->attach($group->id, ['role_in_group' => 'student']);
-                    } else {
-                        $errors[] = [
-                            'row' => $rowNumber,
-                            'errors' => ['group' => ['Группа не найдена: ' . $rowData['group']]],
-                        ];
+                    // Assign roles if provided
+                    if (isset($userData['role_ids']) && is_array($userData['role_ids'])) {
+                        $user->roles()->sync($userData['role_ids']);
                     }
+
+                    $imported++;
+                } catch (\Exception $e) {
+                    $errors[] = [
+                        'row' => $index + 1,
+                        'error' => $e->getMessage()
+                    ];
                 }
-
-                $successCount++;
-            }
-
-            if (!empty($errors)) {
-                DB::rollBack();
-                return response()->json([
-                    'message' => 'Импорт завершен с ошибками',
-                    'success_count' => $successCount,
-                    'errors' => $errors,
-                ], 422);
             }
 
             DB::commit();
+
             return response()->json([
-                'message' => 'Импорт успешно завершен',
-                'success_count' => $successCount,
+                'success' => true,
+                'message' => "Imported {$imported} users",
+                'imported' => $imported,
+                'errors' => $errors
             ]);
         } catch (\Exception $e) {
             DB::rollBack();
             return response()->json([
-                'message' => 'Ошибка импорта: ' . $e->getMessage(),
-                'errors' => $errors,
+                'success' => false,
+                'message' => 'Import failed: ' . $e->getMessage()
             ], 500);
         }
     }
 
+    /**
+     * Import schedule items
+     */
     public function importSchedule(Request $request): JsonResponse
     {
-        $request->validate([
-            'file' => ['required', 'file', 'mimes:xlsx,xls', 'max:10240'],
-            'versionId' => ['required', 'integer', 'exists:schedule_versions,id'],
+        $validator = Validator::make($request->all(), [
+            'version_id' => 'required|exists:schedule_versions,id',
+            'data' => 'required|array',
+            'data.*.date' => 'required|date',
+            'data.*.time_slot_id' => 'required|exists:time_slots,id',
+            'data.*.group_id' => 'required|exists:groups,id',
+            'data.*.subgroup_id' => 'nullable|exists:subgroups,id',
+            'data.*.subject_id' => 'required|exists:subjects,id',
+            'data.*.teacher_user_id' => 'required|exists:users,id',
+            'data.*.room_id' => 'required|exists:rooms,id',
+            'data.*.override_reason' => 'nullable|string',
         ]);
 
-        $version = ScheduleVersion::findOrFail($request->input('versionId'));
-        $file = $request->file('file');
-        $data = Excel::toArray([], $file);
-
-        if (empty($data) || empty($data[0])) {
-            return response()->json(['message' => 'Файл пуст'], 400);
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation errors',
+                'errors' => $validator->errors()
+            ], 422);
         }
 
-        $rows = $data[0];
-        // Skip header row
-        $headerRow = array_shift($rows);
-        
+        $imported = 0;
         $errors = [];
-        $successCount = 0;
 
-        DB::beginTransaction();
         try {
-            foreach ($rows as $index => $row) {
-                $rowNumber = $index + 2; // +2 because of header row and 0-based index
+            DB::beginTransaction();
 
-                // Convert numeric array to associative array
-                $rowData = [
-                    'date' => $row[0] ?? '',
-                    'time_slot' => $row[1] ?? '',
-                    'group' => $row[2] ?? '',
-                    'subject' => $row[3] ?? '',
-                    'teacher_email' => $row[4] ?? '',
-                    'room' => $row[5] ?? '',
-                ];
+            foreach ($request->data as $index => $itemData) {
+                try {
+                    DB::table('schedule_items')->insert([
+                        'version_id' => $request->version_id,
+                        'date' => $itemData['date'],
+                        'time_slot_id' => $itemData['time_slot_id'],
+                        'group_id' => $itemData['group_id'],
+                        'subgroup_id' => $itemData['subgroup_id'] ?? null,
+                        'subject_id' => $itemData['subject_id'],
+                        'teacher_user_id' => $itemData['teacher_user_id'],
+                        'room_id' => $itemData['room_id'],
+                        'override_reason' => $itemData['override_reason'] ?? null,
+                        'created_by' => auth()->id(),
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ]);
 
-                $validator = Validator::make($rowData, [
-                    'date' => ['required', 'date'],
-                    'time_slot' => ['required', 'string'],
-                    'group' => ['required', 'string'],
-                    'subject' => ['required', 'string'],
-                    'teacher_email' => ['required', 'email'],
-                    'room' => ['nullable', 'string'],
-                ]);
-
-                if ($validator->fails()) {
+                    $imported++;
+                } catch (\Exception $e) {
                     $errors[] = [
-                        'row' => $rowNumber,
-                        'errors' => $validator->errors()->toArray(),
+                        'row' => $index + 1,
+                        'error' => $e->getMessage()
                     ];
-                    continue;
                 }
-
-                // Find time slot
-                $timeSlot = TimeSlot::where('name', $rowData['time_slot'])->first();
-                if (!$timeSlot) {
-                    $errors[] = [
-                        'row' => $rowNumber,
-                        'errors' => ['time_slot' => ['Временной слот не найден: ' . $rowData['time_slot']]],
-                    ];
-                    continue;
-                }
-
-                // Find group
-                $group = Group::where('name', $rowData['group'])->first();
-                if (!$group) {
-                    $errors[] = [
-                        'row' => $rowNumber,
-                        'errors' => ['group' => ['Группа не найдена: ' . $rowData['group']]],
-                    ];
-                    continue;
-                }
-
-                // Find subject
-                $subject = Subject::where('name', $rowData['subject'])->first();
-                if (!$subject) {
-                    $errors[] = [
-                        'row' => $rowNumber,
-                        'errors' => ['subject' => ['Предмет не найден: ' . $rowData['subject']]],
-                    ];
-                    continue;
-                }
-
-                // Find teacher
-                $teacher = User::where('email', $rowData['teacher_email'])->first();
-                if (!$teacher) {
-                    $errors[] = [
-                        'row' => $rowNumber,
-                        'errors' => ['teacher_email' => ['Преподаватель не найден: ' . $rowData['teacher_email']]],
-                    ];
-                    continue;
-                }
-
-                // Find room (optional)
-                $room = null;
-                if (!empty($rowData['room'])) {
-                    $room = \App\Models\Room::where('name', $rowData['room'])->first();
-                    if (!$room) {
-                        $errors[] = [
-                            'row' => $rowNumber,
-                            'errors' => ['room' => ['Аудитория не найдена: ' . $rowData['room']]],
-                        ];
-                        continue;
-                    }
-                }
-
-                // Create schedule item
-                ScheduleItem::create([
-                    'version_id' => $version->id,
-                    'date' => $rowData['date'],
-                    'time_slot_id' => $timeSlot->id,
-                    'group_id' => $group->id,
-                    'subject_id' => $subject->id,
-                    'teacher_user_id' => $teacher->id,
-                    'room_id' => $room?->id,
-                    'created_by' => auth()->id(),
-                ]);
-
-                $successCount++;
-            }
-
-            if (!empty($errors)) {
-                DB::rollBack();
-                return response()->json([
-                    'message' => 'Импорт завершен с ошибками',
-                    'success_count' => $successCount,
-                    'errors' => $errors,
-                ], 422);
             }
 
             DB::commit();
+
             return response()->json([
-                'message' => 'Импорт успешно завершен',
-                'success_count' => $successCount,
+                'success' => true,
+                'message' => "Imported {$imported} schedule items",
+                'imported' => $imported,
+                'errors' => $errors
             ]);
         } catch (\Exception $e) {
             DB::rollBack();
             return response()->json([
-                'message' => 'Ошибка импорта: ' . $e->getMessage(),
-                'errors' => $errors,
+                'success' => false,
+                'message' => 'Import failed: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Import grades
+     */
+    public function importGrades(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'data' => 'required|array',
+            'data.*.lesson_id' => 'nullable|exists:lessons,id',
+            'data.*.assignment_id' => 'nullable|exists:assignments,id',
+            'data.*.student_user_id' => 'required|exists:users,id',
+            'data.*.value' => 'required|integer|min:1|max:5',
+            'data.*.weight' => 'nullable|integer|min:1',
+            'data.*.grade_type' => 'nullable|string',
+            'data.*.comment' => 'nullable|string',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation errors',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        $imported = 0;
+        $errors = [];
+
+        try {
+            DB::beginTransaction();
+
+            foreach ($request->data as $index => $gradeData) {
+                try {
+                    // Validate that either lesson_id or assignment_id is provided
+                    if (empty($gradeData['lesson_id']) && empty($gradeData['assignment_id'])) {
+                        throw new \Exception('Either lesson_id or assignment_id must be provided');
+                    }
+
+                    DB::table('grades')->insert([
+                        'lesson_id' => $gradeData['lesson_id'] ?? null,
+                        'assignment_id' => $gradeData['assignment_id'] ?? null,
+                        'student_user_id' => $gradeData['student_user_id'],
+                        'value' => $gradeData['value'],
+                        'weight' => $gradeData['weight'] ?? 1,
+                        'grade_type' => $gradeData['grade_type'] ?? null,
+                        'comment' => $gradeData['comment'] ?? null,
+                        'created_by' => auth()->id(),
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ]);
+
+                    $imported++;
+                } catch (\Exception $e) {
+                    $errors[] = [
+                        'row' => $index + 1,
+                        'error' => $e->getMessage()
+                    ];
+                }
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => "Imported {$imported} grades",
+                'imported' => $imported,
+                'errors' => $errors
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'Import failed: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Import attendance records
+     */
+    public function importAttendance(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'data' => 'required|array',
+            'data.*.lesson_id' => 'required|exists:lessons,id',
+            'data.*.student_user_id' => 'required|exists:users,id',
+            'data.*.status' => 'required|in:present,absent,late',
+            'data.*.reason' => 'nullable|string',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation errors',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        $imported = 0;
+        $errors = [];
+
+        try {
+            DB::beginTransaction();
+
+            foreach ($request->data as $index => $attendanceData) {
+                try {
+                    // Check if attendance already exists
+                    $exists = DB::table('attendance')
+                        ->where('lesson_id', $attendanceData['lesson_id'])
+                        ->where('student_user_id', $attendanceData['student_user_id'])
+                        ->exists();
+
+                    if ($exists) {
+                        // Update existing record
+                        DB::table('attendance')
+                            ->where('lesson_id', $attendanceData['lesson_id'])
+                            ->where('student_user_id', $attendanceData['student_user_id'])
+                            ->update([
+                                'status' => $attendanceData['status'],
+                                'reason' => $attendanceData['reason'] ?? null,
+                                'updated_at' => now(),
+                            ]);
+                    } else {
+                        // Create new record
+                        DB::table('attendance')->insert([
+                            'lesson_id' => $attendanceData['lesson_id'],
+                            'student_user_id' => $attendanceData['student_user_id'],
+                            'status' => $attendanceData['status'],
+                            'reason' => $attendanceData['reason'] ?? null,
+                            'created_by' => auth()->id(),
+                            'created_at' => now(),
+                            'updated_at' => now(),
+                        ]);
+                    }
+
+                    $imported++;
+                } catch (\Exception $e) {
+                    $errors[] = [
+                        'row' => $index + 1,
+                        'error' => $e->getMessage()
+                    ];
+                }
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => "Imported {$imported} attendance records",
+                'imported' => $imported,
+                'errors' => $errors
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'Import failed: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Import KTP (curriculum plans)
+     */
+    public function importKtp(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'data' => 'required|array',
+            'data.*.subject_id' => 'required|exists:subjects,id',
+            'data.*.group_id' => 'required|exists:groups,id',
+            'data.*.term_id' => 'required|exists:terms,id',
+            'data.*.teacher_user_id' => 'nullable|exists:users,id',
+            'data.*.name' => 'required|string',
+            'data.*.description' => 'nullable|string',
+            'data.*.is_template' => 'nullable|boolean',
+            'data.*.template_id' => 'nullable|exists:curriculum_plans,id',
+            'data.*.topics' => 'nullable|array',
+            'data.*.topics.*.order' => 'required|integer',
+            'data.*.topics.*.title' => 'required|string',
+            'data.*.topics.*.description' => 'nullable|string',
+            'data.*.topics.*.hours_total' => 'required|integer',
+            'data.*.topics.*.hours_lecture' => 'nullable|integer',
+            'data.*.topics.*.hours_practice' => 'nullable|integer',
+            'data.*.topics.*.hours_lab' => 'nullable|integer',
+            'data.*.topics.*.control_type' => 'nullable|string',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation errors',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        $imported = 0;
+        $errors = [];
+
+        try {
+            DB::beginTransaction();
+
+            foreach ($request->data as $index => $ktpData) {
+                try {
+                    // Create curriculum plan
+                    $curriculumPlanId = DB::table('curriculum_plans')->insertGetId([
+                        'subject_id' => $ktpData['subject_id'],
+                        'group_id' => $ktpData['group_id'],
+                        'term_id' => $ktpData['term_id'],
+                        'teacher_user_id' => $ktpData['teacher_user_id'] ?? null,
+                        'name' => $ktpData['name'],
+                        'description' => $ktpData['description'] ?? null,
+                        'is_template' => $ktpData['is_template'] ?? false,
+                        'template_id' => $ktpData['template_id'] ?? null,
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ]);
+
+                    // Import topics if provided
+                    if (isset($ktpData['topics']) && is_array($ktpData['topics'])) {
+                        foreach ($ktpData['topics'] as $topicData) {
+                            DB::table('curriculum_topics')->insert([
+                                'curriculum_plan_id' => $curriculumPlanId,
+                                'order' => $topicData['order'],
+                                'title' => $topicData['title'],
+                                'description' => $topicData['description'] ?? null,
+                                'hours_total' => $topicData['hours_total'],
+                                'hours_lecture' => $topicData['hours_lecture'] ?? 0,
+                                'hours_practice' => $topicData['hours_practice'] ?? 0,
+                                'hours_lab' => $topicData['hours_lab'] ?? 0,
+                                'control_type' => $topicData['control_type'] ?? null,
+                                'created_at' => now(),
+                                'updated_at' => now(),
+                            ]);
+                        }
+                    }
+
+                    $imported++;
+                } catch (\Exception $e) {
+                    $errors[] = [
+                        'row' => $index + 1,
+                        'error' => $e->getMessage()
+                    ];
+                }
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => "Imported {$imported} curriculum plans",
+                'imported' => $imported,
+                'errors' => $errors
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'Import failed: ' . $e->getMessage()
             ], 500);
         }
     }
 }
-

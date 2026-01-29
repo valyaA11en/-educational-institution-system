@@ -56,7 +56,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { documentsApi, type DocTemplateDTO } from '../api/documents'
+import { documentsApi } from '../api/documents'
 
 const router = useRouter()
 const form = ref({
@@ -136,5 +136,12 @@ onMounted(() => {
   loadTemplates()
 })
 </script>
+
+
+
+
+
+
+
 
 

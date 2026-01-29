@@ -137,3 +137,10 @@ export function useCrudTable<T extends { id: number }>(
 }
 
 
+
+
+
+
+
+
+

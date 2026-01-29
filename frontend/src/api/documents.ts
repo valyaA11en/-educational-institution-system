@@ -195,4 +195,12 @@ export const documentsApi = {
     const response = await apiClient.get(`/v1/documents/verify/${hash}`)
     return response.data
   },
+
+  validateGost: async (id: number): Promise<{
+    valid: boolean
+    errors: string[]
+  }> => {
+    const response = await apiClient.post(`/v1/documents/${id}/gost/validate`)
+    return response.data
+  },
 }

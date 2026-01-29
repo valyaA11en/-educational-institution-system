@@ -22,7 +22,7 @@ use App\Http\Controllers\Api\V1\FileController;
 use App\Http\Controllers\Api\V1\JournalController;
 use App\Http\Controllers\Api\V1\MaterialController;
 use App\Http\Controllers\Api\V1\NotificationController;
-use App\Http\Controllers\Api\V1\RealtimeController;
+// use App\Http\Controllers\Api\V1\RealtimeController; // Temporarily disabled - missing controller
 use App\Http\Controllers\Api\V1\RoleController;
 use App\Http\Controllers\Api\V1\RuleController;
 use App\Http\Controllers\Api\V1\ScheduleController;
@@ -31,19 +31,79 @@ use App\Http\Controllers\Api\V1\UserController;
 use Illuminate\Support\Facades\Route;
 
 // Realtime replay endpoint (outside of versioned prefix): /api/realtime/replay
-Route::middleware('auth:api')->get('realtime/replay', [RealtimeController::class, 'replay']);
+// Route::middleware('auth:api')->get('realtime/replay', [RealtimeController::class, 'replay']); // Temporarily disabled
+
+// Metrics and health (public for monitoring)
+// Route::get('metrics', [\App\Http\Controllers\Api\V1\MetricsController::class, 'prometheus']); // Temporarily disabled
+// Route::get('health', [\App\Http\Controllers\Api\V1\MetricsController::class, 'health']); // Temporarily disabled
 
 Route::prefix('v1')->group(function (): void {
     // Public routes
-    Route::post('auth/login', [AuthController::class, 'login']);
-    Route::post('auth/refresh', [AuthController::class, 'refresh']);
+    Route::get('meta', [\App\Http\Controllers\Api\V1\MetaController::class, 'index']);
+    Route::post('auth/login', [AuthController::class, 'login'])->middleware('throttle:login');
+    Route::post('auth/refresh', [AuthController::class, 'refresh'])->middleware('throttle:login');
+    Route::post('auth/2fa/verify', [AuthController::class, 'verify2FA']);
 
-    // Protected routes
-    Route::middleware('auth:api')->group(function (): void {
+        // Print routes (protected)
+        Route::middleware('auth:api')->prefix('print')->group(function (): void {
+            Route::get('schedule', [\App\Http\Controllers\Api\V1\PrintController::class, 'schedule']);
+            Route::get('journal', [\App\Http\Controllers\Api\V1\PrintController::class, 'journal']);
+            Route::get('attendance', [\App\Http\Controllers\Api\V1\PrintController::class, 'attendance']);
+        });
+
+        // Student timeline
+        Route::middleware('auth:api')->prefix('students')->group(function (): void {
+            Route::get('{id}/timeline', [\App\Http\Controllers\Api\V1\StudentTimelineController::class, 'index']);
+            Route::get('{id}/timeline/export', [\App\Http\Controllers\Api\V1\StudentTimelineController::class, 'export']);
+            
+            // Student portfolio
+            Route::get('{id}/portfolio', [\App\Http\Controllers\Api\V1\StudentPortfolioController::class, 'index']);
+            Route::get('{id}/portfolio/export', [\App\Http\Controllers\Api\V1\StudentPortfolioController::class, 'export']);
+            Route::patch('{id}/portfolio/{itemId}', [\App\Http\Controllers\Api\V1\StudentPortfolioController::class, 'update']);
+            Route::post('{id}/portfolio/manual', [\App\Http\Controllers\Api\V1\StudentPortfolioController::class, 'storeManual']);
+        });
+
+        // Personal assistant
+        Route::middleware('auth:api')->prefix('assistant')->group(function (): void {
+            Route::get('today', [\App\Http\Controllers\Api\V1\PersonalAssistantController::class, 'today']);
+        });
+
+        // Portfolio
+        Route::middleware('auth:api')->prefix('portfolio')->group(function (): void {
+            Route::get('/', [\App\Http\Controllers\Api\V1\PortfolioController::class, 'index']);
+            Route::post('/', [\App\Http\Controllers\Api\V1\PortfolioController::class, 'store']);
+            Route::put('{id}', [\App\Http\Controllers\Api\V1\PortfolioController::class, 'update']);
+            Route::delete('{id}', [\App\Http\Controllers\Api\V1\PortfolioController::class, 'destroy']);
+        });
+
+        // Failed topics analysis
+        Route::middleware('auth:api')->prefix('analysis')->group(function (): void {
+            Route::get('failed-topics/{studentId}', [\App\Http\Controllers\Api\V1\FailedTopicsController::class, 'student']);
+            Route::get('complex-topics', [\App\Http\Controllers\Api\V1\FailedTopicsController::class, 'complexTopics']);
+        });
+
+        // Student export
+        Route::middleware('auth:api')->prefix('students')->group(function (): void {
+            Route::get('{id}/export', [\App\Http\Controllers\Api\V1\StudentExportController::class, 'export']);
+        });
+
+        // Protected routes
+        Route::middleware('auth:api')->group(function (): void {
+        // Tenant context
+        Route::prefix('tenant')->group(function (): void {
+            Route::get('current', [\App\Http\Controllers\Api\V1\TenantContextController::class, 'current']);
+            Route::post('switch', [\App\Http\Controllers\Api\V1\TenantContextController::class, 'switch'])->middleware('role:admin');
+            Route::get('list', [\App\Http\Controllers\Api\V1\TenantContextController::class, 'list'])->middleware('role:admin');
+        });
+
         // Auth
         Route::prefix('auth')->group(function (): void {
             Route::get('me', [AuthController::class, 'me']);
             Route::post('logout', [AuthController::class, 'logout']);
+            Route::get('2fa/status', [\App\Http\Controllers\Api\V1\TwoFactorStatusController::class, 'status']);
+            Route::post('2fa/setup', [\App\Http\Controllers\Api\V1\TwoFactorController::class, 'setup']);
+            Route::post('2fa/enable', [\App\Http\Controllers\Api\V1\TwoFactorController::class, 'enable']);
+            Route::post('2fa/disable', [\App\Http\Controllers\Api\V1\TwoFactorController::class, 'disable']);
         });
 
         // Roles
@@ -103,8 +163,12 @@ Route::prefix('v1')->group(function (): void {
             Route::get('diff', [ScheduleController::class, 'diff']);
             Route::get('items', [ScheduleController::class, 'items']);
             Route::post('items', [ScheduleController::class, 'createItem'])->middleware('can:schedule.create');
+            Route::put('items/{id}', [ScheduleController::class, 'updateItem'])->middleware('can:schedule.create');
+            Route::delete('items/{id}', [ScheduleController::class, 'deleteItem'])->middleware('can:schedule.create');
             Route::get('replacements', [ScheduleController::class, 'replacements']);
             Route::post('replacements', [ScheduleController::class, 'createReplacement'])->middleware('can:schedule.replace');
+            Route::post('replacements/{id}/approve', [ScheduleController::class, 'approveReplacement'])->middleware('can:schedule.replace');
+            Route::post('replacements/{id}/apply', [ScheduleController::class, 'applyReplacement'])->middleware('can:schedule.replace');
             Route::post('suggest-room', [ScheduleController::class, 'suggestRoom'])->middleware('can:schedule.create');
             Route::post('suggest-teacher', [ScheduleController::class, 'suggestTeacher'])->middleware('can:schedule.create');
         });
@@ -145,14 +209,20 @@ Route::prefix('v1')->group(function (): void {
 
         // Journal
         Route::prefix('journal')->middleware('can:journal.read')->group(function (): void {
-            Route::get('lessons', [JournalController::class, 'lessons']);
-            Route::post('lessons', [JournalController::class, 'createLesson'])->middleware('can:journal.create');
-            Route::get('grades', [JournalController::class, 'grades']);
-            Route::post('grades', [JournalController::class, 'createGrade'])->middleware('can:journal.grade');
-            Route::get('attendance', [JournalController::class, 'attendance']);
-            Route::post('attendance', [JournalController::class, 'createAttendance'])->middleware('can:journal.attendance');
             Route::get('reports', [JournalController::class, 'reports']);
             Route::get('reports/grade-changes/export', [JournalController::class, 'exportGradeChanges'])->middleware('can:journal.read');
+            Route::get('lessons', [JournalController::class, 'lessons']);
+            Route::post('lessons', [JournalController::class, 'createLesson'])->middleware('can:journal.create');
+            Route::put('lessons/{id}', [JournalController::class, 'updateLesson'])->middleware('can:journal.create');
+            Route::delete('lessons/{id}', [JournalController::class, 'destroyLesson'])->middleware('can:journal.create');
+            Route::get('grades', [JournalController::class, 'grades']);
+            Route::post('grades', [JournalController::class, 'createGrade'])->middleware('can:journal.grade');
+            Route::put('grades/{id}', [JournalController::class, 'updateGrade'])->middleware('can:journal.grade');
+            Route::delete('grades/{id}', [JournalController::class, 'destroyGrade'])->middleware('can:journal.grade');
+            Route::get('attendance', [JournalController::class, 'attendance']);
+            Route::post('attendance', [JournalController::class, 'createAttendance'])->middleware('can:journal.attendance');
+            Route::put('attendance/{id}', [JournalController::class, 'updateAttendance'])->middleware('can:journal.attendance');
+            Route::delete('attendance/{id}', [JournalController::class, 'destroyAttendance'])->middleware('can:journal.attendance');
         });
 
         // Assignments
@@ -162,7 +232,7 @@ Route::prefix('v1')->group(function (): void {
             Route::get('{id}', [AssignmentController::class, 'show']);
             Route::put('{id}', [AssignmentController::class, 'update'])->middleware('can:assignments.update');
             Route::delete('{id}', [AssignmentController::class, 'destroy'])->middleware('can:assignments.delete');
-            Route::post('{id}/submit', [AssignmentController::class, 'submit'])->middleware('can:assignments.submit');
+            Route::post('{id}/submit', [AssignmentController::class, 'submit'])->middleware(['can:assignments.submit', 'throttle:assignment-submit']);
             Route::post('{id}/submissions/{submissionId}/grade', [AssignmentController::class, 'grade'])->middleware('can:assignments.grade');
         });
 
@@ -170,6 +240,7 @@ Route::prefix('v1')->group(function (): void {
         Route::prefix('materials')->group(function (): void {
             Route::get('/', [MaterialController::class, 'index']);
             Route::post('/', [MaterialController::class, 'store'])->middleware('can:materials.create');
+            Route::get('{id}/download', [MaterialController::class, 'download']);
             Route::get('{id}', [MaterialController::class, 'show']);
             Route::put('{id}', [MaterialController::class, 'update'])->middleware('can:materials.update');
             Route::delete('{id}', [MaterialController::class, 'destroy'])->middleware('can:materials.delete');
@@ -178,9 +249,11 @@ Route::prefix('v1')->group(function (): void {
 
         // Files
         Route::prefix('files')->group(function (): void {
-            Route::post('presigned-upload', [FileController::class, 'getPresignedUploadUrl'])->middleware('can:assignments.submit');
+            Route::post('presigned-upload', [FileController::class, 'getPresignedUploadUrl'])->middleware(['can:assignments.submit', 'throttle:file-presign']);
+            Route::post('upload', [FileController::class, 'upload'])->middleware('can:assignments.submit');
             Route::post('{id}/confirm', [FileController::class, 'confirmUpload'])->middleware('can:assignments.submit');
             Route::get('{id}/download', [FileController::class, 'download']);
+            Route::delete('{id}', [FileController::class, 'delete']);
         });
 
         // Documents
@@ -191,6 +264,7 @@ Route::prefix('v1')->group(function (): void {
             Route::get('{id}', [DocumentController::class, 'show']);
             Route::patch('{id}', [DocumentController::class, 'update'])->middleware('can:documents.update');
             Route::get('{id}/download', [DocumentController::class, 'download']);
+            Route::get('{id}/print', [DocumentController::class, 'print']);
             Route::post('{id}/send-to-approval', [DocumentController::class, 'sendToApproval'])->middleware('can:documents.approve');
             Route::post('{id}/approve', [DocumentController::class, 'approve'])->middleware('can:documents.approve');
             Route::post('{id}/reject', [DocumentController::class, 'reject'])->middleware('can:documents.approve');
@@ -200,6 +274,7 @@ Route::prefix('v1')->group(function (): void {
             Route::get('{id}/ack', [DocumentController::class, 'getAck']);
             Route::post('{id}/register-number', [DocumentController::class, 'registerNumber'])->middleware('can:documents.registry');
             Route::get('verify/{hash}', [DocumentController::class, 'verify']);
+            Route::post('{id}/gost/validate', [\App\Http\Controllers\Api\V1\GostDocumentController::class, 'validateDocument'])->middleware('auth:api');
         });
 
         // Document Templates (Admin)
@@ -213,10 +288,11 @@ Route::prefix('v1')->group(function (): void {
         // Notifications
         Route::prefix('notifications')->group(function (): void {
             Route::get('/', [NotificationController::class, 'index']);
-            Route::post('{id}/read', [NotificationController::class, 'markAsRead']);
             Route::post('read-all', [NotificationController::class, 'markAllAsRead']);
             Route::get('settings', [NotificationController::class, 'settings']);
             Route::put('settings', [NotificationController::class, 'updateSettings']);
+            Route::post('{id}/read', [NotificationController::class, 'markAsRead']);
+            Route::delete('{id}', [NotificationController::class, 'delete']);
         });
 
         // Push notifications
@@ -285,8 +361,9 @@ Route::prefix('v1')->group(function (): void {
         Route::prefix('chats')->group(function (): void {
             Route::get('threads', [ChatController::class, 'threads']);
             Route::post('threads', [ChatController::class, 'createThread']);
+            Route::delete('threads/{threadId}', [ChatController::class, 'deleteThread']);
             Route::get('threads/{threadId}/messages', [ChatController::class, 'messages']);
-            Route::post('threads/{threadId}/messages', [ChatController::class, 'sendMessage']);
+            Route::post('threads/{threadId}/messages', [ChatController::class, 'sendMessage'])->middleware('throttle:chat-messages');
             Route::delete('threads/{threadId}/messages/{messageId}', [ChatController::class, 'deleteMessage']);
             Route::post('{id}/report-message', [ChatController::class, 'reportMessage']);
             Route::get('{id}/settings', [ChatController::class, 'getSettings']);
@@ -335,10 +412,16 @@ Route::prefix('v1')->group(function (): void {
             Route::get('risks/entity/{entityType}/{entityId}', [AnalyticsController::class, 'entityRisks']);
             Route::post('risks/{riskId}/resolve', [AnalyticsController::class, 'resolveRisk'])->middleware('can:analytics.manage');
             Route::get('risks/export', [AnalyticsController::class, 'exportRisksReport']);
+            Route::get('topic-performance', [AnalyticsController::class, 'topicPerformance']);
+            Route::get('topics', [AnalyticsController::class, 'topics']);
+            Route::get('topics/{statId}/students', [AnalyticsController::class, 'topicStudents']);
         });
 
         // Admin Roles
         Route::get('admin/roles', [RolesController::class, 'index'])->middleware('can:users.read');
+
+        // Admin Terms (references)
+        Route::get('admin/terms', [\App\Http\Controllers\Api\Admin\TermsController::class, 'index']);
 
         // Admin Users CRUD (only users.read permission)
         Route::prefix('admin/users')->middleware('can:users.read')->group(function (): void {
@@ -354,11 +437,48 @@ Route::prefix('v1')->group(function (): void {
         Route::prefix('admin/import')->middleware('role:admin')->group(function (): void {
             Route::post('users-xlsx', [ImportController::class, 'importUsers']);
             Route::post('schedule-xlsx', [ImportController::class, 'importSchedule']);
+            Route::post('grades-xlsx', [ImportController::class, 'importGrades']);
+            Route::post('attendance-xlsx', [ImportController::class, 'importAttendance']);
+            Route::post('ktp-xlsx', [ImportController::class, 'importKtp']);
         });
 
         Route::prefix('admin/export')->middleware('role:admin')->group(function (): void {
             Route::get('users-xlsx', [ExportController::class, 'exportUsers']);
             Route::get('schedule-xlsx', [ExportController::class, 'exportSchedule']);
+        });
+
+        // Admin Audit
+        Route::prefix('admin/audit')->middleware('role:admin')->group(function (): void {
+            Route::get('/', [\App\Http\Controllers\Api\Admin\AdminAuditController::class, 'index']);
+            Route::get('export', [\App\Http\Controllers\Api\Admin\AdminAuditController::class, 'export']);
+            Route::get('{id}', [\App\Http\Controllers\Api\Admin\AdminAuditController::class, 'show']);
+        });
+
+        // Admin Webhooks
+        Route::prefix('admin/webhooks')->middleware('role:admin')->group(function (): void {
+            Route::get('/', [\App\Http\Controllers\Api\Admin\WebhookController::class, 'index']);
+            Route::post('/', [\App\Http\Controllers\Api\Admin\WebhookController::class, 'store']);
+            Route::get('{id}', [\App\Http\Controllers\Api\Admin\WebhookController::class, 'show']);
+            Route::patch('{id}', [\App\Http\Controllers\Api\Admin\WebhookController::class, 'update']);
+            Route::delete('{id}', [\App\Http\Controllers\Api\Admin\WebhookController::class, 'destroy']);
+        });
+
+        // Reports (PDF generation)
+        Route::prefix('reports')->middleware('can:reports.view')->group(function (): void {
+            Route::get('journal', [\App\Http\Controllers\Api\V1\ReportController::class, 'journal']);
+            Route::get('schedule', [\App\Http\Controllers\Api\V1\ReportController::class, 'schedule']);
+            Route::get('grade-sheet', [\App\Http\Controllers\Api\V1\ReportController::class, 'gradeSheet']);
+            Route::get('order', [\App\Http\Controllers\Api\V1\ReportController::class, 'order']);
+        });
+
+        // Admin Tenants
+        Route::prefix('admin/tenants')->middleware('role:admin')->group(function (): void {
+            Route::get('/', [\App\Http\Controllers\Api\Admin\TenantController::class, 'index']);
+            Route::post('/', [\App\Http\Controllers\Api\Admin\TenantController::class, 'store']);
+            Route::get('{id}', [\App\Http\Controllers\Api\Admin\TenantController::class, 'show']);
+            Route::patch('{id}', [\App\Http\Controllers\Api\Admin\TenantController::class, 'update']);
+            Route::delete('{id}', [\App\Http\Controllers\Api\Admin\TenantController::class, 'destroy']);
+            Route::post('{id}/switch', [\App\Http\Controllers\Api\Admin\TenantSwitchController::class, 'switch']);
         });
 
         // Admin Settings
@@ -379,6 +499,59 @@ Route::prefix('v1')->group(function (): void {
         // Admin Analytics
         Route::prefix('admin/analytics')->middleware('can:analytics.manage')->group(function (): void {
             Route::post('recalc', [AnalyticsController::class, 'recalc']);
+        });
+
+        // Control Panels
+        Route::prefix('panels')->middleware('auth:api')->group(function (): void {
+            Route::get('curator', [\App\Http\Controllers\Api\V1\ControlPanelController::class, 'curator']);
+            Route::get('methodist', [\App\Http\Controllers\Api\V1\ControlPanelController::class, 'methodist']);
+            Route::get('principal', [\App\Http\Controllers\Api\V1\ControlPanelController::class, 'principal']);
+        });
+
+        // Journal Bulk
+        Route::prefix('journal')->middleware('auth:api')->group(function (): void {
+            Route::post('bulk/grades', [\App\Http\Controllers\Api\V1\JournalBulkController::class, 'bulkUpdateGrades']);
+            Route::post('bulk/attendance', [\App\Http\Controllers\Api\V1\JournalBulkController::class, 'bulkUpdateAttendance']);
+        });
+
+        // Journal Grid
+        Route::prefix('journal')->middleware('auth:api')->group(function (): void {
+            Route::get('grid', [\App\Http\Controllers\Api\V1\JournalGridController::class, 'index']);
+            Route::post('grid/save', [\App\Http\Controllers\Api\V1\JournalGridController::class, 'save']);
+        });
+
+        // Data Import
+        Route::prefix('import')->middleware('auth:api')->group(function (): void {
+            Route::post('users', [\App\Http\Controllers\Api\V1\DataImportController::class, 'importUsers']);
+            Route::post('groups', [\App\Http\Controllers\Api\V1\DataImportController::class, 'importGroups']);
+            Route::post('schedule', [\App\Http\Controllers\Api\V1\DataImportController::class, 'importSchedule']);
+            Route::post('grades', [\App\Http\Controllers\Api\V1\DataImportController::class, 'importGrades']);
+        });
+
+        // Audit
+        Route::prefix('audit')->middleware('auth:api')->group(function (): void {
+            Route::get('/', [\App\Http\Controllers\Api\V1\AuditController::class, 'index']);
+            Route::get('/export', [\App\Http\Controllers\Api\V1\AuditController::class, 'export']);
+        });
+
+        // GOST Documents
+        Route::prefix('gost-documents')->middleware('auth:api')->group(function (): void {
+            Route::get('templates', [\App\Http\Controllers\Api\V1\GostDocumentController::class, 'templates']);
+            Route::post('orders', [\App\Http\Controllers\Api\V1\GostDocumentController::class, 'generateOrder']);
+            Route::post('decrees', [\App\Http\Controllers\Api\V1\GostDocumentController::class, 'generateDecree']);
+            Route::get('{id}', [\App\Http\Controllers\Api\V1\GostDocumentController::class, 'show']);
+        });
+
+        // WebSocket ACK & Replay
+        Route::prefix('websocket')->middleware('auth:api')->group(function (): void {
+            Route::post('ack', [\App\Http\Controllers\Api\V1\WebSocketController::class, 'acknowledge']);
+            Route::post('ack-batch', [\App\Http\Controllers\Api\V1\WebSocketController::class, 'acknowledgeBatch']);
+            Route::get('replay', [\App\Http\Controllers\Api\V1\WebSocketController::class, 'replay']);
+            Route::post('replay-trigger', [\App\Http\Controllers\Api\V1\WebSocketController::class, 'triggerReplay']);
+            
+            // New WS event delivery endpoints
+            Route::post('ws-ack', [\App\Http\Controllers\Api\V1\WebSocketController::class, 'wsAcknowledge']);
+            Route::get('ws-replay', [\App\Http\Controllers\Api\V1\WebSocketController::class, 'wsReplay']);
         });
 
         // Admin Tickets

@@ -42,3 +42,9 @@ fio                    | email              | phone        | role    | group
 - Статус пользователя: `active`
 - Если указана группа, пользователь добавляется в `group_members` с ролью `student`
 
+
+
+
+
+
+

@@ -3,359 +3,303 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
-use App\Models\ChatThread;
-use App\Models\ChatMessage;
-use App\Models\ChatComplaint;
-use App\Models\ChatReport;
-use App\Models\ChatThreadSettings;
-use App\Services\Outbox\OutboxService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Validator;
 
 class ChatController extends Controller
 {
-    public function __construct(
-        private OutboxService $outboxService
-    ) {
-    }
     public function threads(Request $request): JsonResponse
     {
-        $user = auth()->user();
+        $userId = (int) auth()->id();
+        $tenantId = (int) auth()->user()->tenant_id;
 
-        $threads = ChatThread::whereHas('members', function ($query) use ($user) {
-            $query->where('user_id', $user->id);
-        })->with(['members'])->get();
+        $rows = DB::table('chat_threads as t')
+            ->join('chat_members as m', 'm.thread_id', '=', 't.id')
+            ->where('m.user_id', $userId)
+            ->when(Schema::hasColumn('chat_threads', 'tenant_id'), fn ($q) => $q->where('t.tenant_id', $tenantId))
+            ->orderByDesc('t.updated_at')
+            ->select('t.*')
+            ->distinct()
+            ->get();
 
-        return response()->json($threads);
+        return response()->json(['data' => $rows]);
+    }
+
+    public function deleteThread(Request $request, $threadId): JsonResponse
+    {
+        $userId = (int) auth()->id();
+        if (!$this->isMember((int) $threadId, $userId)) {
+            return response()->json(['message' => 'Access denied'], 403);
+        }
+        $t = DB::table('chat_threads')->where('id', $threadId)->first();
+        if (!$t) {
+            return response()->json(['message' => 'Thread not found'], 404);
+        }
+        if ((int) $t->created_by !== $userId) {
+            return response()->json(['message' => 'Only creator can delete the thread'], 403);
+        }
+        DB::table('chat_threads')->where('id', $threadId)->delete();
+        return response()->json(['message' => 'Deleted']);
     }
 
     public function createThread(Request $request): JsonResponse
     {
-        $validated = $request->validate([
-            'type' => ['required', 'in:group,private'],
-            'name' => ['required', 'string', 'max:255'],
-            'description' => ['sometimes', 'nullable', 'string'],
-            'member_ids' => ['required', 'array', 'min:1'],
-            'member_ids.*' => ['integer', 'exists:users,id'],
-            'is_announcement' => ['sometimes', 'boolean'],
-            'quiet_hours_start' => ['sometimes', 'nullable', 'date_format:H:i'],
-            'quiet_hours_end' => ['sometimes', 'nullable', 'date_format:H:i'],
-            'max_attachment_size' => ['sometimes', 'nullable', 'integer'],
-            'allowed_attachment_types' => ['sometimes', 'nullable', 'array'],
+        $v = Validator::make($request->all(), [
+            'type' => 'required|in:dm,group,subject,curator_parents',
+            'group_id' => 'nullable|exists:groups,id',
+            'subject_id' => 'nullable|exists:subjects,id',
+            'member_ids' => 'nullable|array',
+            'member_ids.*' => 'exists:users,id',
+        ]);
+        if ($v->fails()) {
+            return response()->json(['message' => 'Validation errors', 'errors' => $v->errors()], 422);
+        }
+
+        $tenantId = (int) auth()->user()->tenant_id;
+        $userId = (int) auth()->id();
+
+        $id = DB::table('chat_threads')->insertGetId([
+            'type' => $request->type,
+            'group_id' => $request->group_id,
+            'subject_id' => $request->subject_id,
+            'created_by' => $userId,
+            'tenant_id' => $tenantId,
+            'created_at' => now(),
+            'updated_at' => now(),
         ]);
 
-        DB::beginTransaction();
-        try {
-            $thread = ChatThread::create([
-                'type' => $validated['type'],
-                'name' => $validated['name'],
-                'description' => $validated['description'] ?? null,
-                'is_announcement' => $validated['is_announcement'] ?? false,
-                'quiet_hours_start' => $validated['quiet_hours_start'] ?? null,
-                'quiet_hours_end' => $validated['quiet_hours_end'] ?? null,
-                'max_attachment_size' => $validated['max_attachment_size'] ?? null,
-                'allowed_attachment_types' => $validated['allowed_attachment_types'] ?? null,
+        DB::table('chat_members')->insert([
+            'thread_id' => $id,
+            'user_id' => $userId,
+            'role_in_chat' => 'moderator',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $memberIds = array_unique(array_merge($request->member_ids ?? [], []));
+        foreach ($memberIds as $uid) {
+            if ((int) $uid === $userId) {
+                continue;
+            }
+            DB::table('chat_members')->insertOrIgnore([
+                'thread_id' => $id,
+                'user_id' => $uid,
+                'role_in_chat' => 'member',
+                'created_at' => now(),
+                'updated_at' => now(),
             ]);
-
-            $memberIds = array_unique(array_merge($validated['member_ids'], [auth()->id()]));
-            $thread->members()->attach($memberIds);
-
-            DB::commit();
-            return response()->json($thread->load('members'), 201);
-        } catch (\Exception $e) {
-            DB::rollBack();
-            throw $e;
         }
+
+        $row = DB::table('chat_threads')->where('id', $id)->first();
+        return response()->json(['data' => $row], 201);
     }
 
-    public function messages(Request $request, int $threadId): JsonResponse
+    public function messages(Request $request, $threadId): JsonResponse
     {
-        $thread = ChatThread::findOrFail($threadId);
-        $this->authorize('view', $thread);
-
-        $messages = ChatMessage::where('thread_id', $threadId)
-            ->with('user')
-            ->orderBy('created_at', 'asc')
-            ->paginate($request->integer('per_page', 50));
-
-        return response()->json($messages);
-    }
-
-    public function sendMessage(Request $request, int $threadId): JsonResponse
-    {
-        $thread = ChatThread::with('settings')->findOrFail($threadId);
-        $this->authorize('write', $thread);
-
-        $user = auth()->user();
-        $settings = $thread->settings;
-
-        // Check if user is moderator
-        $isModerator = $thread->members()
-            ->where('user_id', $user->id)
-            ->wherePivot('role_in_chat', 'moderator')
-            ->exists()
-            || $user->permissions()->where('code', 'chat.moderate')->exists();
-
-        // Check announcements mode
-        if ($settings && $settings->mode === 'announcements' && !$isModerator) {
-            return response()->json([
-                'message' => 'В режиме объявлений писать могут только модераторы.',
-            ], 403);
+        $userId = (int) auth()->id();
+        if (!$this->isMember($threadId, $userId)) {
+            return response()->json(['message' => 'Access denied'], 403);
         }
 
-        // Check quiet hours from settings
-        if ($settings && $settings->quiet_hours) {
-            $now = now();
-            $currentTime = $now->format('H:i');
-            
-            foreach ($settings->quiet_hours as $quietPeriod) {
-                $start = $quietPeriod['start'] ?? null;
-                $end = $quietPeriod['end'] ?? null;
-                
-                if ($start && $end && !$isModerator) {
-                    if ($start <= $end) {
-                        if ($currentTime >= $start && $currentTime <= $end) {
-                            return response()->json([
-                                'message' => 'Тихие часы. Сообщения запрещены.',
-                            ], 403);
-                        }
-                    } else {
-                        // Crosses midnight
-                        if ($currentTime >= $start || $currentTime <= $end) {
-                            return response()->json([
-                                'message' => 'Тихие часы. Сообщения запрещены.',
-                            ], 403);
-                        }
-                    }
-                }
-            }
-        }
+        $perPage = max(1, min(100, (int) ($request->query('per_page') ?? 50)));
+        $q = DB::table('chat_messages')
+            ->where('thread_id', $threadId)
+            ->whereNull('deleted_at')
+            ->orderByDesc('created_at');
 
-        // Legacy quiet hours check (from thread itself)
-        if ($thread->quiet_hours_start && $thread->quiet_hours_end && !$isModerator) {
-            $now = now()->format('H:i');
-            $start = $thread->quiet_hours_start->format('H:i');
-            $end = $thread->quiet_hours_end->format('H:i');
-            
-            if ($start <= $end) {
-                if ($now >= $start && $now <= $end) {
-                    return response()->json([
-                        'message' => 'Тихие часы. Сообщения запрещены.',
-                    ], 403);
-                }
-            } else {
-                if ($now >= $start || $now <= $end) {
-                    return response()->json([
-                        'message' => 'Тихие часы. Сообщения запрещены.',
-                    ], 403);
-                }
-            }
-        }
+        $total = (clone $q)->count();
+        $rows = $q->offset(0)->limit($perPage)->get();
 
-        $validated = $request->validate([
-            'text' => ['required', 'string'],
-            'attachment_ids' => ['sometimes', 'array'],
-            'attachment_ids.*' => ['integer', 'exists:files,id'],
+        return response()->json([
+            'data' => $rows->reverse()->values()->all(),
+            'meta' => ['total' => $total, 'per_page' => $perPage],
         ]);
+    }
 
-        // Check attachments_enabled
-        if (!empty($validated['attachment_ids'])) {
-            if ($settings && !$settings->attachments_enabled) {
-                return response()->json([
-                    'message' => 'Вложения запрещены в этом чате.',
-                ], 403);
-            }
-
-            $files = \App\Models\File::whereIn('id', $validated['attachment_ids'])->get();
-            
-            foreach ($files as $file) {
-                if ($thread->max_attachment_size && $file->size > $thread->max_attachment_size) {
-                    return response()->json([
-                        'message' => "Файл {$file->original_name} превышает максимальный размер",
-                    ], 422);
-                }
-
-                if ($thread->allowed_attachment_types) {
-                    $extension = strtolower(pathinfo($file->original_name, PATHINFO_EXTENSION));
-                    $mimeType = $file->mime;
-                    
-                    $allowed = false;
-                    foreach ($thread->allowed_attachment_types as $allowedType) {
-                        if ($extension === strtolower($allowedType) || $mimeType === $allowedType) {
-                            $allowed = true;
-                            break;
-                        }
-                    }
-
-                    if (!$allowed) {
-                        return response()->json([
-                            'message' => "Тип файла {$file->original_name} не разрешен",
-                        ], 422);
-                    }
-                }
-            }
+    public function sendMessage(Request $request, $threadId): JsonResponse
+    {
+        $v = Validator::make($request->all(), [
+            'text' => 'required|string|max:65535',
+            'attachments' => 'nullable|array',
+        ]);
+        if ($v->fails()) {
+            return response()->json(['message' => 'Validation errors', 'errors' => $v->errors()], 422);
         }
 
-        $message = ChatMessage::create([
+        $userId = (int) auth()->id();
+        if (!$this->isMember($threadId, $userId)) {
+            return response()->json(['message' => 'Access denied'], 403);
+        }
+
+        $id = DB::table('chat_messages')->insertGetId([
             'thread_id' => $threadId,
-            'user_id' => auth()->id(),
-            'text' => $validated['text'],
+            'user_id' => $userId,
+            'text' => $request->text,
+            'attachments' => $request->has('attachments') ? json_encode($request->attachments) : null,
+            'created_at' => now(),
+            'updated_at' => now(),
         ]);
 
-        if (!empty($validated['attachment_ids'])) {
-            $message->files()->attach($validated['attachment_ids']);
-        }
-
-        return response()->json($message->load('user'), 201);
+        $row = DB::table('chat_messages')->where('id', $id)->first();
+        return response()->json(['data' => $row], 201);
     }
 
-    public function deleteMessage(Request $request, int $threadId, int $messageId): JsonResponse
+    public function deleteMessage(Request $request, $threadId, $messageId): JsonResponse
     {
-        $message = ChatMessage::where('thread_id', $threadId)->findOrFail($messageId);
-        $this->authorize('moderate', ChatThread::findOrFail($threadId));
+        $userId = (int) auth()->id();
+        if (!$this->isMember($threadId, $userId)) {
+            return response()->json(['message' => 'Access denied'], 403);
+        }
 
-        $message->delete();
+        $msg = DB::table('chat_messages')
+            ->where('id', $messageId)
+            ->where('thread_id', $threadId)
+            ->first();
+        if (!$msg) {
+            return response()->json(['message' => 'Message not found'], 404);
+        }
+        if ((int) $msg->user_id !== $userId) {
+            return response()->json(['message' => 'Can only delete own messages'], 403);
+        }
+
+        DB::table('chat_messages')->where('id', $messageId)->update([
+            'deleted_at' => now(),
+            'updated_at' => now(),
+        ]);
 
         return response()->json(['message' => 'Deleted']);
     }
 
-    public function reportMessage(Request $request, int $threadId): JsonResponse
+    public function reportMessage(Request $request, $id): JsonResponse
     {
-        $thread = ChatThread::findOrFail($threadId);
-        $this->authorize('view', $thread);
-
-        $validated = $request->validate([
-            'messageId' => ['required', 'integer', 'exists:chat_messages,id'],
-            'reason' => ['required', 'string', 'max:1000'],
+        $v = Validator::make($request->all(), [
+            'reason' => 'required|string|max:65535',
         ]);
+        if ($v->fails()) {
+            return response()->json(['message' => 'Validation errors', 'errors' => $v->errors()], 422);
+        }
 
-        $message = ChatMessage::where('thread_id', $threadId)
-            ->findOrFail($validated['messageId']);
+        $userId = (int) auth()->id();
+        $msg = DB::table('chat_messages')->where('id', $id)->whereNull('deleted_at')->first();
+        if (!$msg) {
+            return response()->json(['message' => 'Message not found'], 404);
+        }
+        if (!$this->isMember($msg->thread_id, $userId)) {
+            return response()->json(['message' => 'Access denied'], 403);
+        }
 
-        $report = ChatReport::create([
-            'thread_id' => $threadId,
-            'message_id' => $validated['messageId'],
-            'reported_by' => auth()->id(),
-            'reason' => $validated['reason'],
+        DB::table('chat_reports')->insert([
+            'thread_id' => $msg->thread_id,
+            'message_id' => $msg->id,
+            'reported_by' => $userId,
+            'reason' => $request->reason,
             'status' => 'open',
+            'created_at' => now(),
+            'updated_at' => now(),
         ]);
 
-        // Outbox event
-        $this->outboxService->record(
-            \App\Support\Events\EventTypes::CHAT_REPORT_CREATED,
-            auth()->id(),
-            'chat_report',
-            $report->id,
-            [
-                'thread_id' => $threadId,
-                'message_id' => $validated['messageId'],
-                'reason' => $validated['reason'],
-            ]
-        );
-
-        return response()->json($report->load(['thread', 'message', 'reporter']), 201);
+        return response()->json(['message' => 'Report submitted'], 201);
     }
 
-    public function getSettings(int $threadId): JsonResponse
+    public function getSettings(Request $request, $id): JsonResponse
     {
-        $thread = ChatThread::findOrFail($threadId);
-        $this->authorize('view', $thread);
-
-        $settings = ChatThreadSettings::where('thread_id', $threadId)->first();
-
-        if (!$settings) {
-            return response()->json(null, 404);
+        $userId = (int) auth()->id();
+        if (!$this->isMember($id, $userId)) {
+            return response()->json(['message' => 'Access denied'], 403);
         }
-
-        return response()->json($settings->load('thread'));
+        $row = DB::table('chat_thread_settings')->where('thread_id', $id)->first();
+        return response()->json(['data' => $row ? (array) $row : []]);
     }
 
-    public function updateSettings(Request $request, int $threadId): JsonResponse
+    public function updateSettings(Request $request, $id): JsonResponse
     {
-        $thread = ChatThread::findOrFail($threadId);
-        $this->authorize('update', $thread);
-
-        $validated = $request->validate([
-            'mode' => ['sometimes', 'in:standard,announcements'],
-            'quiet_hours' => ['sometimes', 'nullable', 'array'],
-            'quiet_hours.*.start' => ['required_with:quiet_hours', 'string', 'regex:/^([0-1][0-9]|2[0-3]):[0-5][0-9]$/'],
-            'quiet_hours.*.end' => ['required_with:quiet_hours', 'string', 'regex:/^([0-1][0-9]|2[0-3]):[0-5][0-9]$/'],
-            'attachments_enabled' => ['sometimes', 'boolean'],
+        $v = Validator::make($request->all(), [
+            'mode' => 'nullable|in:standard,announcements',
+            'quiet_hours' => 'nullable|array',
+            'quiet_hours.*.start' => 'required_with:quiet_hours|string|max:32',
+            'quiet_hours.*.end' => 'required_with:quiet_hours|string|max:32',
+            'attachments_enabled' => 'nullable|boolean',
         ]);
-
-        $settings = ChatThreadSettings::firstOrCreate(
-            ['thread_id' => $threadId],
-            [
-                'mode' => 'standard',
-                'attachments_enabled' => true,
-            ]
-        );
-
-        $oldSettings = $settings->toArray();
-
-        if (isset($validated['mode'])) {
-            $settings->mode = $validated['mode'];
-        }
-        if (isset($validated['quiet_hours'])) {
-            $settings->quiet_hours = $validated['quiet_hours'];
-        }
-        if (isset($validated['attachments_enabled'])) {
-            $settings->attachments_enabled = $validated['attachments_enabled'];
+        if ($v->fails()) {
+            return response()->json(['message' => 'Validation errors', 'errors' => $v->errors()], 422);
         }
 
-        $settings->save();
+        $thread = DB::table('chat_threads')->where('id', $id)->first();
+        if (!$thread) {
+            return response()->json(['message' => 'Thread not found'], 404);
+        }
 
-        // Outbox event
-        $this->outboxService->record(
-            \App\Support\Events\EventTypes::CHAT_THREAD_SETTINGS_CHANGED,
-            auth()->id(),
-            'chat_thread',
-            $threadId,
-            [
-                'thread_id' => $threadId,
-                'before' => $oldSettings,
-                'after' => $settings->toArray(),
-            ]
-        );
-
-        return response()->json($settings->load('thread'));
+        $row = DB::table('chat_thread_settings')->where('thread_id', $id)->first();
+        $payload = [
+            'mode' => $request->input('mode', $row?->mode ?? 'standard'),
+            'quiet_hours' => $request->has('quiet_hours') ? json_encode($request->quiet_hours) : ($row?->quiet_hours ?? null),
+            'attachments_enabled' => $request->has('attachments_enabled') ? $request->boolean('attachments_enabled') : ($row?->attachments_enabled ?? true),
+            'updated_at' => now(),
+        ];
+        if ($row) {
+            DB::table('chat_thread_settings')->where('thread_id', $id)->update($payload);
+        } else {
+            $payload['thread_id'] = $id;
+            $payload['created_at'] = now();
+            $payload['attachments_enabled'] = $request->has('attachments_enabled') ? $request->boolean('attachments_enabled') : true;
+            DB::table('chat_thread_settings')->insert($payload);
+        }
+        $out = DB::table('chat_thread_settings')->where('thread_id', $id)->first();
+        return response()->json(['data' => (array) $out]);
     }
 
     public function complaints(Request $request): JsonResponse
     {
-        $this->authorize('moderate', ChatThread::class);
-
-        $query = ChatComplaint::with(['thread', 'message', 'reporter']);
-
-        if ($status = $request->query('status')) {
-            $query->where('status', $status);
+        $tenantId = (int) auth()->user()->tenant_id;
+        $q = DB::table('chat_reports as r')
+            ->join('chat_threads as t', 't.id', '=', 'r.thread_id')
+            ->when(Schema::hasColumn('chat_threads', 'tenant_id'), fn ($q) => $q->where('t.tenant_id', $tenantId))
+            ->select('r.*')
+            ->orderByDesc('r.created_at');
+        if ($request->filled('status')) {
+            $q->where('r.status', $request->status);
         }
-
-        $complaints = $query->orderBy('created_at', 'desc')
-            ->paginate($request->integer('per_page', 20));
-
-        return response()->json($complaints);
+        $items = $q->limit(200)->get();
+        return response()->json(['data' => $items]);
     }
 
-    public function reviewComplaint(Request $request, int $id): JsonResponse
+    public function reviewComplaint(Request $request, $id): JsonResponse
     {
-        $this->authorize('moderate', ChatThread::class);
-
-        $complaint = ChatComplaint::findOrFail($id);
-
-        $validated = $request->validate([
-            'status' => ['required', 'in:resolved,dismissed'],
-            'review_notes' => ['sometimes', 'nullable', 'string'],
+        $v = Validator::make($request->all(), [
+            'status' => 'required|in:reviewed,closed',
+            'notes' => 'nullable|string|max:65535',
         ]);
+        if ($v->fails()) {
+            return response()->json(['message' => 'Validation errors', 'errors' => $v->errors()], 422);
+        }
 
-        $complaint->update([
-            'status' => $validated['status'],
-            'reviewed_by' => auth()->id(),
-            'reviewed_at' => now(),
-            'review_notes' => $validated['review_notes'] ?? null,
+        $tenantId = (int) auth()->user()->tenant_id;
+        $r = DB::table('chat_reports as r')
+            ->join('chat_threads as t', 't.id', '=', 'r.thread_id')
+            ->when(Schema::hasColumn('chat_threads', 'tenant_id'), fn ($q) => $q->where('t.tenant_id', $tenantId))
+            ->where('r.id', $id)
+            ->select('r.*')
+            ->first();
+        if (!$r) {
+            return response()->json(['message' => 'Complaint not found'], 404);
+        }
+
+        DB::table('chat_reports')->where('id', $id)->update([
+            'status' => $request->status,
+            'updated_at' => now(),
         ]);
+        $row = DB::table('chat_reports')->where('id', $id)->first();
+        return response()->json(['data' => $row]);
+    }
 
-        return response()->json($complaint->load(['thread', 'message', 'reporter', 'reviewer']));
+    private function isMember(int $threadId, int $userId): bool
+    {
+        return DB::table('chat_members')
+            ->where('thread_id', $threadId)
+            ->where('user_id', $userId)
+            ->exists();
     }
 }

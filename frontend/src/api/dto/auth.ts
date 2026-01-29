@@ -17,6 +17,7 @@ export interface UserDTO {
   email: string | null
   phone: string | null
   status: 'active' | 'blocked'
+  group_id?: number | null
 }
 
 export interface RoleDTO {
@@ -35,5 +36,12 @@ export interface MeDTO {
   roles: RoleDTO[]
   permissions: PermissionDTO[]
 }
+
+
+
+
+
+
+
 
 

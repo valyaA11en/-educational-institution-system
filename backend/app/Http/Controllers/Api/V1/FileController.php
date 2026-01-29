@@ -3,175 +3,206 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
-use App\Models\Assignment;
-use App\Models\File;
-use Aws\S3\S3Client;
-use Aws\Exception\AwsException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class FileController extends Controller
 {
+    private const FILES_DISK = 'local';
+    private const FILES_PREFIX = 'files';
+
+    /**
+     * Get presigned upload URL: creates a pending file row and returns file_id + upload_url.
+     * Client then POSTs the file to upload_url (POST /files/upload) with file_id.
+     */
     public function getPresignedUploadUrl(Request $request): JsonResponse
     {
-        $this->authorize('presign', File::class);
-
-        $validated = $request->validate([
-            'assignment_id' => ['sometimes', 'nullable', 'integer', 'exists:assignments,id'],
-            'ticket_id' => ['sometimes', 'nullable', 'integer', 'exists:tickets,id'],
-            'filename' => ['required', 'string', 'max:255'],
-            'size' => ['required', 'integer', 'min:1'],
-            'mime' => ['required', 'string'],
+        $v = Validator::make($request->all(), [
+            'filename' => 'required|string|max:255',
+            'mime' => 'required|string|max:128',
+            'size' => 'required|integer|min:0|max:52428800',
+            'assignment_id' => 'nullable|exists:assignments,id',
+            'ticket_id' => 'nullable|exists:tickets,id',
         ]);
-
-        // At least one of assignment_id or ticket_id must be provided
-        if (empty($validated['assignment_id']) && empty($validated['ticket_id'])) {
-            return response()->json([
-                'message' => 'Either assignment_id or ticket_id must be provided',
-            ], 422);
+        if ($v->fails()) {
+            return response()->json(['message' => 'Validation errors', 'errors' => $v->errors()], 422);
         }
 
-        $maxFileSize = 10485760; // Default 10MB
-        $allowedTypes = null;
+        $userId = (int) auth()->id();
+        $tenantId = (int) auth()->user()->tenant_id;
+        $uuid = Str::uuid()->toString();
+        $storageKey = self::FILES_PREFIX . '/pending/' . $uuid;
 
-        // If assignment_id is provided, validate against assignment constraints
-        if (!empty($validated['assignment_id'])) {
-            $assignment = Assignment::findOrFail($validated['assignment_id']);
+        $id = DB::table('files')->insertGetId([
+            'storage_key' => $storageKey,
+            'original_name' => $request->filename,
+            'size' => 0,
+            'mime' => $request->mime,
+            'uploaded_by' => $userId,
+            'tenant_id' => $tenantId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
 
-            // Validate file size
-            if ($assignment->max_file_size && $validated['size'] > $assignment->max_file_size) {
-                return response()->json([
-                    'message' => "Размер файла превышает максимально допустимый: " . $this->formatBytes($assignment->max_file_size),
-                ], 422);
-            }
+        $base = rtrim(config('app.url'), '/');
+        $uploadUrl = $base . '/api/v1/files/upload?file_id=' . $id;
 
-            // Validate file type
-            if ($assignment->allowed_types && !empty($assignment->allowed_types)) {
-                $extension = strtolower(pathinfo($validated['filename'], PATHINFO_EXTENSION));
-                $mimeType = $validated['mime'];
+        return response()->json([
+            'file_id' => $id,
+            'upload_url' => $uploadUrl,
+        ]);
+    }
 
-                $allowed = false;
-                foreach ($assignment->allowed_types as $allowedType) {
-                    if ($extension === strtolower($allowedType) || $mimeType === $allowedType) {
-                        $allowed = true;
-                        break;
-                    }
-                }
-
-                if (!$allowed) {
-                    return response()->json([
-                        'message' => "Тип файла не разрешен. Разрешенные типы: " . implode(', ', $assignment->allowed_types),
-                    ], 422);
-                }
-            }
-
-            // Generate unique file path for assignment
-            $path = 'assignments/' . $assignment->id . '/' . Str::uuid() . '/' . $validated['filename'];
-        } else {
-            // For tickets, use default constraints
-            if ($validated['size'] > $maxFileSize) {
-                return response()->json([
-                    'message' => "Размер файла превышает максимально допустимый: " . $this->formatBytes($maxFileSize),
-                ], 422);
-            }
-
-            // Generate unique file path for ticket
-            $path = 'tickets/' . $validated['ticket_id'] . '/' . Str::uuid() . '/' . $validated['filename'];
+    /**
+     * Direct upload: store file and update DB. Use when S3 presigned is not used.
+     */
+    public function upload(Request $request): JsonResponse
+    {
+        $fileId = $request->query('file_id') ?? $request->input('file_id');
+        $v = Validator::make(['file_id' => $fileId, 'file' => $request->file('file')], [
+            'file_id' => 'required|integer|exists:files,id',
+            'file' => 'required|file|max:52428800',
+        ]);
+        if ($v->fails()) {
+            return response()->json(['message' => 'Validation errors', 'errors' => $v->errors()], 422);
         }
 
-        // Generate presigned URL for upload (valid for 1 hour)
-        $s3Client = new S3Client([
-            'version' => 'latest',
-            'region' => config('filesystems.disks.s3.region'),
-            'endpoint' => config('filesystems.disks.s3.endpoint'),
-            'use_path_style_endpoint' => config('filesystems.disks.s3.use_path_style_endpoint'),
-            'credentials' => [
-                'key' => config('filesystems.disks.s3.key'),
-                'secret' => config('filesystems.disks.s3.secret'),
-            ],
-        ]);
+        $userId = (int) auth()->id();
+        $f = DB::table('files')->where('id', $fileId)->where('uploaded_by', $userId)->first();
+        if (!$f) {
+            return response()->json(['message' => 'File not found'], 404);
+        }
 
-        $command = $s3Client->getCommand('PutObject', [
-            'Bucket' => config('filesystems.disks.s3.bucket'),
-            'Key' => $path,
-            'ContentType' => $validated['mime'],
-            'ContentLength' => $validated['size'],
-        ]);
+        if (!str_starts_with($f->storage_key, self::FILES_PREFIX . '/pending/')) {
+            return response()->json(['message' => 'File already uploaded'], 422);
+        }
 
-        $presignedUrl = (string) $s3Client->createPresignedRequest($command, '+1 hour')->getUri();
+        $file = $request->file('file');
+        $path = $file->store(self::FILES_PREFIX, self::FILES_DISK);
+        if (!$path) {
+            return response()->json(['message' => 'Storage failed'], 500);
+        }
 
-        // Create file record
-        $file = File::create([
+        DB::table('files')->where('id', $f->id)->update([
             'storage_key' => $path,
-            'original_name' => $validated['filename'],
-            'size' => $validated['size'],
-            'mime' => $validated['mime'],
-            'uploaded_by' => auth()->id(),
+            'original_name' => $file->getClientOriginalName(),
+            'size' => $file->getSize(),
+            'mime' => $file->getMimeType(),
+            'updated_at' => now(),
         ]);
 
+        $row = DB::table('files')->where('id', $f->id)->first();
+
         return response()->json([
-            'file_id' => $file->id,
-            'upload_url' => $presignedUrl,
-            'expires_at' => now()->addHour()->toIso8601String(),
+            'file' => $this->fileToDto($row),
         ]);
     }
 
-    public function confirmUpload(Request $request, int $fileId): JsonResponse
+    /**
+     * Confirm upload (e.g. after client upload to upload_url). Returns file record.
+     */
+    public function confirmUpload(Request $request, $id): JsonResponse
     {
-        $file = File::findOrFail($fileId);
-
-        // Verify file exists in storage
-        if (!Storage::disk('s3')->exists($file->storage_key)) {
-            return response()->json([
-                'message' => 'Файл не найден в хранилище',
-            ], 404);
+        $v = Validator::make($request->all(), [
+            'filename' => 'sometimes|string|max:255',
+            'size' => 'sometimes|integer|min:0',
+            'content_type' => 'sometimes|string|max:128',
+        ]);
+        if ($v->fails()) {
+            return response()->json(['message' => 'Validation errors', 'errors' => $v->errors()], 422);
         }
 
-        // Update file status if needed
-        // TODO: add status field to files table if needed
-
-        return response()->json([
-            'id' => $file->id,
-            'filename' => $file->original_name,
-            'size' => $file->size,
-            'content_type' => $file->mime,
-            'file_path' => $file->storage_key,
-            'created_at' => $file->created_at?->toIso8601String(),
-            'download_url' => Storage::disk('s3')->temporaryUrl($file->storage_key, now()->addHours(24)),
-        ]);
-    }
-
-    public function download(Request $request, int $fileId): JsonResponse
-    {
-        $file = File::findOrFail($fileId);
-
-        // TODO: check permissions (user can download if has access to assignment/submission)
-
-        if (!Storage::disk('s3')->exists($file->storage_key)) {
-            return response()->json([
-                'message' => 'Файл не найден',
-            ], 404);
+        $userId = (int) auth()->id();
+        $f = DB::table('files')->where('id', $id)->where('uploaded_by', $userId)->first();
+        if (!$f) {
+            return response()->json(['message' => 'File not found'], 404);
         }
 
-        $downloadUrl = Storage::disk('s3')->temporaryUrl($file->storage_key, now()->addHours(1));
+        $upd = [];
+        if ($request->filled('filename')) {
+            $upd['original_name'] = $request->filename;
+        }
+        if ($request->filled('size')) {
+            $upd['size'] = (int) $request->size;
+        }
+        if ($request->filled('content_type')) {
+            $upd['mime'] = $request->content_type;
+        }
+        if (!empty($upd)) {
+            $upd['updated_at'] = now();
+            DB::table('files')->where('id', $id)->update($upd);
+            $f = DB::table('files')->where('id', $id)->first();
+        }
 
-        return response()->json([
-            'download_url' => $downloadUrl,
-            'expires_at' => now()->addHour()->toIso8601String(),
-        ]);
+        return response()->json(['file' => $this->fileToDto($f)]);
     }
 
-    private function formatBytes(int $bytes): string
+    /**
+     * Download file by id.
+     */
+    public function download(Request $request, $id): StreamedResponse|JsonResponse
     {
-        $units = ['B', 'KB', 'MB', 'GB'];
-        $bytes = max($bytes, 0);
-        $pow = floor(($bytes ? log($bytes) : 0) / log(1024));
-        $pow = min($pow, count($units) - 1);
-        $bytes /= (1 << (10 * $pow));
+        $f = DB::table('files')->where('id', $id)->first();
+        if (!$f) {
+            return response()->json(['message' => 'File not found'], 404);
+        }
 
-        return round($bytes, 2) . ' ' . $units[$pow];
+        if (str_starts_with($f->storage_key, self::FILES_PREFIX . '/pending/')) {
+            return response()->json(['message' => 'File not yet uploaded'], 422);
+        }
+
+        if (!Storage::disk(self::FILES_DISK)->exists($f->storage_key)) {
+            return response()->json(['message' => 'File missing in storage'], 404);
+        }
+
+        $name = $f->original_name ?: 'download';
+
+        return response()->streamDownload(
+            function () use ($f): void {
+                echo Storage::disk(self::FILES_DISK)->get($f->storage_key);
+            },
+            $name,
+            [
+                'Content-Type' => $f->mime ?: 'application/octet-stream',
+                'Content-Disposition' => 'attachment; filename="' . addslashes($name) . '"',
+            ],
+            'attachment'
+        );
+    }
+
+    /**
+     * Delete file (own files only).
+     */
+    public function delete(Request $request, $id): JsonResponse
+    {
+        $userId = (int) auth()->id();
+        $f = DB::table('files')->where('id', $id)->where('uploaded_by', $userId)->first();
+        if (!$f) {
+            return response()->json(['message' => 'File not found'], 404);
+        }
+
+        if (Storage::disk(self::FILES_DISK)->exists($f->storage_key)) {
+            Storage::disk(self::FILES_DISK)->delete($f->storage_key);
+        }
+        DB::table('files')->where('id', $id)->delete();
+
+        return response()->json(['message' => 'Deleted']);
+    }
+
+    private function fileToDto(object $row): object
+    {
+        return (object) [
+            'id' => $row->id,
+            'filename' => $row->original_name,
+            'size' => (int) $row->size,
+            'content_type' => $row->mime,
+            'file_path' => $row->storage_key,
+            'created_at' => $row->created_at,
+        ];
     }
 }
-

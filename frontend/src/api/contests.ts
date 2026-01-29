@@ -1,4 +1,4 @@
-import api from './index'
+import apiClient from './client'
 
 export interface ContestDTO {
   id: number
@@ -112,13 +112,15 @@ export interface ContestJuryDTO {
   user?: { id: number; name: string; fio: string }
 }
 
+const base = '/v1/contests'
+
 export const contestsApi = {
   list: (params?: { active?: boolean; visibility_scope?: string }) => {
-    return api.get<{ data: ContestDTO[]; total: number }>('/contests', { params })
+    return apiClient.get<{ data: ContestDTO[]; total: number }>(base, { params })
   },
 
   get: (id: number) => {
-    return api.get<ContestDTO>(`/contests/${id}`)
+    return apiClient.get<ContestDTO>(`${base}/${id}`)
   },
 
   create: (data: {
@@ -129,7 +131,7 @@ export const contestsApi = {
     visibility_scope: 'all' | 'group' | 'invite'
     targets?: Array<{ group_id?: number; user_id?: number }>
   }) => {
-    return api.post<ContestDTO>('/contests', data)
+    return apiClient.post<ContestDTO>(base, data)
   },
 
   update: (id: number, data: {
@@ -139,26 +141,26 @@ export const contestsApi = {
     end_at?: string
     visibility_scope?: 'all' | 'group' | 'invite'
   }) => {
-    return api.patch<ContestDTO>(`/contests/${id}`, data)
+    return apiClient.patch<ContestDTO>(`${base}/${id}`, data)
   },
 
   delete: (id: number) => {
-    return api.delete(`/contests/${id}`)
+    return apiClient.delete(`${base}/${id}`)
   },
 
   setTargets: (id: number, targets: Array<{ group_id?: number; user_id?: number }>) => {
-    return api.post(`/contests/${id}/targets`, { targets })
+    return apiClient.post(`${base}/${id}/targets`, { targets })
   },
 
   addJury: (id: number, data: { user_id: number; role: 'chair' | 'member' }) => {
-    return api.post<ContestJuryDTO>(`/contests/${id}/jury`, data)
+    return apiClient.post<ContestJuryDTO>(`${base}/${id}/jury`, data)
   },
 
   addRubric: (id: number, data: {
     title: string
     criteria_json: Array<{ key: string; title: string; maxScore: number; weight?: number }>
   }) => {
-    return api.post<ContestRubricDTO>(`/contests/${id}/rubric`, data)
+    return apiClient.post<ContestRubricDTO>(`${base}/${id}/rubric`, data)
   },
 
   submit: (id: number, data: {
@@ -166,37 +168,37 @@ export const contestsApi = {
     description?: string
     fileIds: number[]
   }) => {
-    return api.post<ContestSubmissionDTO>(`/contests/${id}/submit`, data)
+    return apiClient.post<ContestSubmissionDTO>(`${base}/${id}/submit`, data)
   },
 
   getSubmissions: (id: number) => {
-    return api.get<ContestSubmissionDTO[]>(`/contests/${id}/submissions`)
+    return apiClient.get<ContestSubmissionDTO[]>(`${base}/${id}/submissions`)
   },
 
   getSubmission: (id: number, sid: number) => {
-    return api.get<ContestSubmissionDTO>(`/contests/${id}/submissions/${sid}`)
+    return apiClient.get<ContestSubmissionDTO>(`${base}/${id}/submissions/${sid}`)
   },
 
   score: (id: number, sid: number, data: {
     rubric_json: Record<string, number>
     comment?: string
   }) => {
-    return api.post<ContestScoreDTO>(`/contests/${id}/submissions/${sid}/score`, data)
+    return apiClient.post<ContestScoreDTO>(`${base}/${id}/submissions/${sid}/score`, data)
   },
 
   getScores: (id: number, sid: number) => {
-    return api.get<ContestScoreDTO[]>(`/contests/${id}/submissions/${sid}/scores`)
+    return apiClient.get<ContestScoreDTO[]>(`${base}/${id}/submissions/${sid}/scores`)
   },
 
   publishResults: (id: number) => {
-    return api.post(`/contests/${id}/publish-results`)
+    return apiClient.post(`${base}/${id}/publish-results`)
   },
 
   getResults: (id: number) => {
-    return api.get<ContestResultDTO[]>(`/contests/${id}/results`)
+    return apiClient.get<ContestResultDTO[]>(`${base}/${id}/results`)
   },
 
   generateCertificates: (id: number) => {
-    return api.post<Array<{ userId: number; documentId: number }>>(`/contests/${id}/generate-certificates`)
+    return apiClient.post<Array<{ userId: number; documentId: number }>>(`${base}/${id}/generate-certificates`)
   },
 }

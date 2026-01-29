@@ -26,6 +26,33 @@ export interface RiskListResponse {
   last_page: number
 }
 
+export interface TopicPerformanceStat {
+  id: number
+  subject_id: number
+  ktp_topic_id: number
+  term_id: number | null
+  students_total: number
+  students_failed: number
+  fail_percent: number
+  calculated_at: string
+  subject?: {
+    id: number
+    name: string
+  }
+  topic?: {
+    id: number
+    title: string
+  }
+}
+
+export interface TopicsParams {
+  subjectId?: number
+  termId?: number
+  fail_percent?: number
+  page?: number
+  per_page?: number
+}
+
 export const analyticsApi = {
   getRisks: async (params?: {
     groupId?: number
@@ -81,6 +108,17 @@ export const analyticsApi = {
     link.click()
     link.remove()
     window.URL.revokeObjectURL(url)
+  },
+
+  async getTopics(params?: TopicsParams) {
+    const response = await apiClient.get<{
+      data: TopicPerformanceStat[]
+      current_page: number
+      per_page: number
+      total: number
+      last_page: number
+    }>('/v1/analytics/topics', { params })
+    return response.data
   },
 }
 

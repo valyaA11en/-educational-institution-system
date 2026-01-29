@@ -4,3 +4,10 @@ TODO: описать REST API, DTO и формат WebSocket-сообщений.
 
 
 
+
+
+
+
+
+
+

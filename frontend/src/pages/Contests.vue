@@ -38,7 +38,7 @@
             :items="contests"
             :loading="loading"
             :items-per-page="20"
-            @click:row="(_, row) => $router.push({ name: 'contest-detail', params: { id: row.item.id } })"
+            @click:row="onRowClick"
           >
             <template #item.start_at="{ item }">
               {{ formatDate(item.start_at) }}
@@ -60,7 +60,7 @@
                 icon="mdi-eye"
                 variant="text"
                 size="small"
-                @click.stop="$router.push({ name: 'contest-detail', params: { id: item.id } })"
+                @click.stop="onRowClick({ item })"
               />
             </template>
           </v-data-table>
@@ -125,10 +125,12 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { contestsApi, type ContestDTO } from '../api/contests'
 import { useAuthStore } from '../stores/auth'
 
 const auth = useAuthStore()
+const router = useRouter()
 const loading = ref(false)
 const creating = ref(false)
 const contests = ref<ContestDTO[]>([])
@@ -159,6 +161,10 @@ const headers = [
   { title: 'Видимость', key: 'visibility_scope' },
   { title: 'Действия', key: 'actions', sortable: false },
 ]
+
+const onRowClick = ({ item }: { item: ContestDTO }) => {
+  router.push({ name: 'contest-detail', params: { id: item.id } })
+}
 
 const formatDate = (date: string) => {
   return new Date(date).toLocaleString('ru-RU')

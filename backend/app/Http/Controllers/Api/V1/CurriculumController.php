@@ -3,214 +3,325 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
-use App\Models\CurriculumPlan;
-use App\Models\CurriculumTopic;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Validator;
 
 class CurriculumController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
-        $query = CurriculumPlan::with(['subject', 'group', 'term', 'teacher', 'topics']);
-
-        if ($subjectId = $request->query('subject_id')) {
-            $query->where('subject_id', $subjectId);
+        $tenantId = (int) auth()->user()->tenant_id;
+        $q = DB::table('curriculum_plans')->when(
+            Schema::hasColumn('curriculum_plans', 'tenant_id'),
+            fn ($q) => $q->where('tenant_id', $tenantId)
+        )->orderBy('id');
+        if ($request->filled('subject_id')) {
+            $q->where('subject_id', $request->subject_id);
         }
-
-        if ($groupId = $request->query('group_id')) {
-            $query->where('group_id', $groupId);
+        if ($request->filled('group_id')) {
+            $q->where('group_id', $request->group_id);
         }
-
-        if ($termId = $request->query('term_id')) {
-            $query->where('term_id', $termId);
+        if ($request->filled('term_id')) {
+            $q->where('term_id', $request->term_id);
         }
-
-        if ($request->boolean('templates_only')) {
-            $query->where('is_template', true);
-        }
-
-        $plans = $query->orderBy('created_at', 'desc')
-            ->paginate($request->integer('per_page', 20));
-
-        return response()->json($plans);
+        $items = $q->get();
+        return response()->json(['data' => $items]);
     }
 
     public function store(Request $request): JsonResponse
     {
-        $validated = $request->validate([
-            'subject_id' => ['required', 'integer', 'exists:subjects,id'],
-            'group_id' => ['required', 'integer', 'exists:groups,id'],
-            'term_id' => ['required', 'integer', 'exists:terms,id'],
-            'teacher_user_id' => ['sometimes', 'nullable', 'integer', 'exists:users,id'],
-            'name' => ['required', 'string', 'max:255'],
-            'description' => ['sometimes', 'nullable', 'string'],
-            'is_template' => ['sometimes', 'boolean'],
-            'template_id' => ['sometimes', 'nullable', 'integer', 'exists:curriculum_plans,id'],
+        $v = Validator::make($request->all(), [
+            'subject_id' => 'required|exists:subjects,id',
+            'group_id' => 'required|exists:groups,id',
+            'term_id' => 'required|exists:terms,id',
+            'teacher_user_id' => 'nullable|exists:users,id',
+            'name' => 'required|string|max:255',
+            'description' => 'nullable|string|max:65535',
+            'is_template' => 'nullable|boolean',
         ]);
-
-        $plan = CurriculumPlan::create($validated);
-
-        return response()->json($plan->load(['subject', 'group', 'term', 'teacher']), 201);
-    }
-
-    public function show(int $id): JsonResponse
-    {
-        $plan = CurriculumPlan::with(['subject', 'group', 'term', 'teacher', 'topics.lessons', 'topics.assignments'])
-            ->findOrFail($id);
-
-        $plan->progress = $plan->progress();
-
-        return response()->json($plan);
-    }
-
-    public function update(Request $request, int $id): JsonResponse
-    {
-        $plan = CurriculumPlan::findOrFail($id);
-
-        $validated = $request->validate([
-            'name' => ['sometimes', 'string', 'max:255'],
-            'description' => ['sometimes', 'nullable', 'string'],
-            'teacher_user_id' => ['sometimes', 'nullable', 'integer', 'exists:users,id'],
-        ]);
-
-        $plan->update($validated);
-
-        return response()->json($plan->load(['subject', 'group', 'term', 'teacher']));
-    }
-
-    public function destroy(int $id): JsonResponse
-    {
-        $plan = CurriculumPlan::findOrFail($id);
-        $plan->delete();
-
-        return response()->json(['message' => 'Deleted']);
-    }
-
-    public function copy(Request $request, int $id): JsonResponse
-    {
-        $sourcePlan = CurriculumPlan::with('topics')->findOrFail($id);
-
-        $validated = $request->validate([
-            'subject_id' => ['sometimes', 'integer', 'exists:subjects,id'],
-            'group_id' => ['sometimes', 'integer', 'exists:groups,id'],
-            'term_id' => ['sometimes', 'integer', 'exists:terms,id'],
-            'name' => ['sometimes', 'string', 'max:255'],
-        ]);
-
-        DB::beginTransaction();
-        try {
-            $newPlan = CurriculumPlan::create([
-                'subject_id' => $validated['subject_id'] ?? $sourcePlan->subject_id,
-                'group_id' => $validated['group_id'] ?? $sourcePlan->group_id,
-                'term_id' => $validated['term_id'] ?? $sourcePlan->term_id,
-                'teacher_user_id' => $sourcePlan->teacher_user_id,
-                'name' => $validated['name'] ?? $sourcePlan->name . ' (копия)',
-                'description' => $sourcePlan->description,
-                'is_template' => false,
-                'template_id' => $sourcePlan->id,
-            ]);
-
-            foreach ($sourcePlan->topics as $topic) {
-                $newTopic = CurriculumTopic::create([
-                    'curriculum_plan_id' => $newPlan->id,
-                    'order' => $topic->order,
-                    'title' => $topic->title,
-                    'description' => $topic->description,
-                    'hours_total' => $topic->hours_total,
-                    'hours_lecture' => $topic->hours_lecture,
-                    'hours_practice' => $topic->hours_practice,
-                    'hours_lab' => $topic->hours_lab,
-                    'control_type' => $topic->control_type,
-                ]);
-            }
-
-            DB::commit();
-            return response()->json($newPlan->load(['subject', 'group', 'term', 'teacher', 'topics']), 201);
-        } catch (\Exception $e) {
-            DB::rollBack();
-            throw $e;
+        if ($v->fails()) {
+            return response()->json(['message' => 'Validation errors', 'errors' => $v->errors()], 422);
         }
+        $tenantId = (int) auth()->user()->tenant_id;
+        $payload = [
+            'subject_id' => $request->subject_id,
+            'group_id' => $request->group_id,
+            'term_id' => $request->term_id,
+            'teacher_user_id' => $request->teacher_user_id,
+            'name' => $request->name,
+            'description' => $request->description,
+            'is_template' => (int) $request->boolean('is_template', false),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ];
+        if (Schema::hasColumn('curriculum_plans', 'tenant_id')) {
+            $payload['tenant_id'] = $tenantId;
+        }
+        $id = DB::table('curriculum_plans')->insertGetId($payload);
+        $row = DB::table('curriculum_plans')->where('id', $id)->first();
+        return response()->json(['data' => $row], 201);
     }
 
-    public function addTopic(Request $request, int $id): JsonResponse
+    public function show(Request $request, $id): JsonResponse
     {
-        $plan = CurriculumPlan::findOrFail($id);
+        $tenantId = (int) auth()->user()->tenant_id;
+        $q = DB::table('curriculum_plans')->where('id', $id);
+        if (Schema::hasColumn('curriculum_plans', 'tenant_id')) {
+            $q->where('tenant_id', $tenantId);
+        }
+        $row = $q->first();
+        if (!$row) {
+            return response()->json(['message' => 'Not found'], 404);
+        }
+        return response()->json(['data' => $row]);
+    }
 
-        $validated = $request->validate([
-            'title' => ['required', 'string', 'max:255'],
-            'description' => ['sometimes', 'nullable', 'string'],
-            'hours_total' => ['required', 'integer', 'min:0'],
-            'hours_lecture' => ['sometimes', 'integer', 'min:0'],
-            'hours_practice' => ['sometimes', 'integer', 'min:0'],
-            'hours_lab' => ['sometimes', 'integer', 'min:0'],
-            'control_type' => ['sometimes', 'nullable', 'string'],
-            'order' => ['sometimes', 'integer'],
+    public function update(Request $request, $id): JsonResponse
+    {
+        $v = Validator::make($request->all(), [
+            'subject_id' => 'sometimes|exists:subjects,id',
+            'group_id' => 'sometimes|exists:groups,id',
+            'term_id' => 'sometimes|exists:terms,id',
+            'teacher_user_id' => 'nullable|exists:users,id',
+            'name' => 'sometimes|string|max:255',
+            'description' => 'nullable|string|max:65535',
+            'is_template' => 'nullable|boolean',
         ]);
-
-        $maxOrder = $plan->topics()->max('order') ?? 0;
-        $validated['order'] = $validated['order'] ?? $maxOrder + 1;
-        $validated['curriculum_plan_id'] = $plan->id;
-
-        $topic = CurriculumTopic::create($validated);
-
-        return response()->json($topic, 201);
+        if ($v->fails()) {
+            return response()->json(['message' => 'Validation errors', 'errors' => $v->errors()], 422);
+        }
+        $tenantId = (int) auth()->user()->tenant_id;
+        $q = DB::table('curriculum_plans')->where('id', $id);
+        if (Schema::hasColumn('curriculum_plans', 'tenant_id')) {
+            $q->where('tenant_id', $tenantId);
+        }
+        $plan = $q->first();
+        if (!$plan) {
+            return response()->json(['message' => 'Not found'], 404);
+        }
+        $upd = array_filter([
+            'subject_id' => $request->subject_id,
+            'group_id' => $request->group_id,
+            'term_id' => $request->term_id,
+            'teacher_user_id' => $request->teacher_user_id,
+            'name' => $request->name,
+            'description' => $request->description,
+            'is_template' => $request->has('is_template') ? (int) $request->boolean('is_template') : null,
+        ], fn ($x) => $x !== null);
+        $upd['updated_at'] = now();
+        DB::table('curriculum_plans')->where('id', $id)->update($upd);
+        return response()->json(['data' => DB::table('curriculum_plans')->where('id', $id)->first()]);
     }
 
-    public function updateTopic(Request $request, int $id, int $topicId): JsonResponse
+    public function destroy(Request $request, $id): JsonResponse
     {
-        $topic = CurriculumTopic::where('curriculum_plan_id', $id)->findOrFail($topicId);
-
-        $validated = $request->validate([
-            'title' => ['sometimes', 'string', 'max:255'],
-            'description' => ['sometimes', 'nullable', 'string'],
-            'hours_total' => ['sometimes', 'integer', 'min:0'],
-            'hours_lecture' => ['sometimes', 'integer', 'min:0'],
-            'hours_practice' => ['sometimes', 'integer', 'min:0'],
-            'hours_lab' => ['sometimes', 'integer', 'min:0'],
-            'control_type' => ['sometimes', 'nullable', 'string'],
-            'order' => ['sometimes', 'integer'],
-        ]);
-
-        $topic->update($validated);
-
-        return response()->json($topic);
-    }
-
-    public function deleteTopic(int $id, int $topicId): JsonResponse
-    {
-        $topic = CurriculumTopic::where('curriculum_plan_id', $id)->findOrFail($topicId);
-        $topic->delete();
-
+        $tenantId = (int) auth()->user()->tenant_id;
+        $q = DB::table('curriculum_plans')->where('id', $id);
+        if (Schema::hasColumn('curriculum_plans', 'tenant_id')) {
+            $q->where('tenant_id', $tenantId);
+        }
+        if (!$q->first()) {
+            return response()->json(['message' => 'Not found'], 404);
+        }
+        DB::table('curriculum_plans')->where('id', $id)->delete();
         return response()->json(['message' => 'Deleted']);
     }
 
-    public function linkLesson(Request $request, int $id, int $topicId): JsonResponse
+    public function copy(Request $request, $id): JsonResponse
     {
-        $topic = CurriculumTopic::where('curriculum_plan_id', $id)->findOrFail($topicId);
-
-        $validated = $request->validate([
-            'lesson_id' => ['required', 'integer', 'exists:lessons,id'],
-        ]);
-
-        $topic->lessons()->syncWithoutDetaching([$validated['lesson_id']]);
-
-        return response()->json($topic->load('lessons'));
+        $tenantId = (int) auth()->user()->tenant_id;
+        $q = DB::table('curriculum_plans')->where('id', $id);
+        if (Schema::hasColumn('curriculum_plans', 'tenant_id')) {
+            $q->where('tenant_id', $tenantId);
+        }
+        $src = $q->first();
+        if (!$src) {
+            return response()->json(['message' => 'Not found'], 404);
+        }
+        $payload = [
+            'subject_id' => $src->subject_id,
+            'group_id' => $src->group_id,
+            'term_id' => $src->term_id,
+            'teacher_user_id' => $src->teacher_user_id,
+            'name' => ($src->name ?? 'Plan') . ' (copy)',
+            'description' => $src->description,
+            'is_template' => (int) ($src->is_template ?? 0),
+            'template_id' => $src->template_id,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ];
+        if (Schema::hasColumn('curriculum_plans', 'tenant_id')) {
+            $payload['tenant_id'] = $tenantId;
+        }
+        $newId = DB::table('curriculum_plans')->insertGetId($payload);
+        $topics = DB::table('curriculum_topics')->where('curriculum_plan_id', $id)->orderBy('order')->get();
+        foreach ($topics as $t) {
+            DB::table('curriculum_topics')->insert([
+                'curriculum_plan_id' => $newId,
+                'order' => $t->order,
+                'title' => $t->title,
+                'description' => $t->description,
+                'hours_total' => $t->hours_total,
+                'hours_lecture' => $t->hours_lecture ?? 0,
+                'hours_practice' => $t->hours_practice ?? 0,
+                'hours_lab' => $t->hours_lab ?? 0,
+                'control_type' => $t->control_type,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
+        $row = DB::table('curriculum_plans')->where('id', $newId)->first();
+        return response()->json(['data' => $row], 201);
     }
 
-    public function linkAssignment(Request $request, int $id, int $topicId): JsonResponse
+    public function addTopic(Request $request, $id): JsonResponse
     {
-        $topic = CurriculumTopic::where('curriculum_plan_id', $id)->findOrFail($topicId);
-
-        $validated = $request->validate([
-            'assignment_id' => ['required', 'integer', 'exists:assignments,id'],
+        $v = Validator::make($request->all(), [
+            'order' => 'required|integer|min:0',
+            'title' => 'required|string|max:255',
+            'description' => 'nullable|string|max:65535',
+            'hours_total' => 'required|integer|min:0',
+            'hours_lecture' => 'nullable|integer|min:0',
+            'hours_practice' => 'nullable|integer|min:0',
+            'hours_lab' => 'nullable|integer|min:0',
+            'control_type' => 'nullable|string|max:64',
         ]);
+        if ($v->fails()) {
+            return response()->json(['message' => 'Validation errors', 'errors' => $v->errors()], 422);
+        }
+        $tenantId = (int) auth()->user()->tenant_id;
+        $plan = $this->plan($id, $tenantId);
+        if (!$plan) {
+            return response()->json(['message' => 'Not found'], 404);
+        }
+        $topicId = DB::table('curriculum_topics')->insertGetId([
+            'curriculum_plan_id' => $id,
+            'order' => $request->order,
+            'title' => $request->title,
+            'description' => $request->description,
+            'hours_total' => $request->hours_total,
+            'hours_lecture' => $request->hours_lecture ?? 0,
+            'hours_practice' => $request->hours_practice ?? 0,
+            'hours_lab' => $request->hours_lab ?? 0,
+            'control_type' => $request->control_type,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $row = DB::table('curriculum_topics')->where('id', $topicId)->first();
+        return response()->json(['data' => $row], 201);
+    }
 
-        $topic->assignments()->syncWithoutDetaching([$validated['assignment_id']]);
+    public function updateTopic(Request $request, $id, $topicId): JsonResponse
+    {
+        $v = Validator::make($request->all(), [
+            'order' => 'sometimes|integer|min:0',
+            'title' => 'sometimes|string|max:255',
+            'description' => 'nullable|string|max:65535',
+            'hours_total' => 'sometimes|integer|min:0',
+            'hours_lecture' => 'nullable|integer|min:0',
+            'hours_practice' => 'nullable|integer|min:0',
+            'hours_lab' => 'nullable|integer|min:0',
+            'control_type' => 'nullable|string|max:64',
+        ]);
+        if ($v->fails()) {
+            return response()->json(['message' => 'Validation errors', 'errors' => $v->errors()], 422);
+        }
+        $tenantId = (int) auth()->user()->tenant_id;
+        $plan = $this->plan($id, $tenantId);
+        if (!$plan) {
+            return response()->json(['message' => 'Not found'], 404);
+        }
+        $topic = DB::table('curriculum_topics')->where('curriculum_plan_id', $id)->where('id', $topicId)->first();
+        if (!$topic) {
+            return response()->json(['message' => 'Topic not found'], 404);
+        }
+        $upd = array_filter([
+            'order' => $request->order,
+            'title' => $request->title,
+            'description' => $request->description,
+            'hours_total' => $request->hours_total,
+            'hours_lecture' => $request->hours_lecture,
+            'hours_practice' => $request->hours_practice,
+            'hours_lab' => $request->hours_lab,
+            'control_type' => $request->control_type,
+        ], fn ($x) => $x !== null);
+        $upd['updated_at'] = now();
+        DB::table('curriculum_topics')->where('id', $topicId)->update($upd);
+        return response()->json(['data' => DB::table('curriculum_topics')->where('id', $topicId)->first()]);
+    }
 
-        return response()->json($topic->load('assignments'));
+    public function deleteTopic(Request $request, $id, $topicId): JsonResponse
+    {
+        $tenantId = (int) auth()->user()->tenant_id;
+        $plan = $this->plan($id, $tenantId);
+        if (!$plan) {
+            return response()->json(['message' => 'Not found'], 404);
+        }
+        $topic = DB::table('curriculum_topics')->where('curriculum_plan_id', $id)->where('id', $topicId)->first();
+        if (!$topic) {
+            return response()->json(['message' => 'Topic not found'], 404);
+        }
+        DB::table('curriculum_topics')->where('id', $topicId)->delete();
+        return response()->json(['message' => 'Deleted']);
+    }
+
+    public function linkLesson(Request $request, $id, $topicId): JsonResponse
+    {
+        $v = Validator::make($request->all(), ['lesson_id' => 'required|exists:lessons,id']);
+        if ($v->fails()) {
+            return response()->json(['message' => 'Validation errors', 'errors' => $v->errors()], 422);
+        }
+        $tenantId = (int) auth()->user()->tenant_id;
+        $plan = $this->plan($id, $tenantId);
+        if (!$plan) {
+            return response()->json(['message' => 'Not found'], 404);
+        }
+        $topic = DB::table('curriculum_topics')->where('curriculum_plan_id', $id)->where('id', $topicId)->first();
+        if (!$topic) {
+            return response()->json(['message' => 'Topic not found'], 404);
+        }
+        DB::table('curriculum_topic_lessons')->insertOrIgnore([
+            'topic_id' => $topicId,
+            'lesson_id' => $request->lesson_id,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        return response()->json(['message' => 'OK']);
+    }
+
+    public function linkAssignment(Request $request, $id, $topicId): JsonResponse
+    {
+        $v = Validator::make($request->all(), ['assignment_id' => 'required|exists:assignments,id']);
+        if ($v->fails()) {
+            return response()->json(['message' => 'Validation errors', 'errors' => $v->errors()], 422);
+        }
+        $tenantId = (int) auth()->user()->tenant_id;
+        $plan = $this->plan($id, $tenantId);
+        if (!$plan) {
+            return response()->json(['message' => 'Not found'], 404);
+        }
+        $topic = DB::table('curriculum_topics')->where('curriculum_plan_id', $id)->where('id', $topicId)->first();
+        if (!$topic) {
+            return response()->json(['message' => 'Topic not found'], 404);
+        }
+        DB::table('curriculum_topic_assignments')->insertOrIgnore([
+            'topic_id' => $topicId,
+            'assignment_id' => $request->assignment_id,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        return response()->json(['message' => 'OK']);
+    }
+
+    private function plan($id, int $tenantId): ?object
+    {
+        $q = DB::table('curriculum_plans')->where('id', $id);
+        if (Schema::hasColumn('curriculum_plans', 'tenant_id')) {
+            $q->where('tenant_id', $tenantId);
+        }
+        return $q->first();
     }
 }
-
-

@@ -38,6 +38,7 @@
             prepend-icon="mdi-plus"
             @click="showCreateDialog = true"
             :loading="processing"
+            :disabled="readOnly.isEnabled"
           >
             Создать черновик
           </v-btn>
@@ -47,6 +48,7 @@
             prepend-icon="mdi-publish"
             @click="publishVersion"
             :loading="processing"
+            :disabled="readOnly.isEnabled"
           >
             Опубликовать
           </v-btn>
@@ -56,9 +58,32 @@
             prepend-icon="mdi-archive"
             @click="archiveVersion"
             :loading="processing"
+            :disabled="readOnly.isEnabled"
           >
             Архивировать
           </v-btn>
+          <v-menu>
+            <template v-slot:activator="{ props }">
+              <v-btn
+                color="primary"
+                prepend-icon="mdi-printer"
+                v-bind="props"
+              >
+                Печать
+              </v-btn>
+            </template>
+            <v-list>
+              <v-list-item @click="printSchedule('group')">
+                <v-list-item-title>По группе</v-list-item-title>
+              </v-list-item>
+              <v-list-item @click="printSchedule('teacher')">
+                <v-list-item-title>По преподавателю</v-list-item-title>
+              </v-list-item>
+              <v-list-item @click="printSchedule('room')">
+                <v-list-item-title>По кабинету</v-list-item-title>
+              </v-list-item>
+            </v-list>
+          </v-menu>
         </div>
       </v-card-title>
 
@@ -115,7 +140,9 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { scheduleApi, type ScheduleVersionDTO } from '../api/schedule'
 import { referencesApi } from '../api/references'
+import { printApi } from '../api/print'
 import { useAuthStore } from '../stores/auth'
+import { useReadOnlyStore } from '../stores/readOnly'
 import { useToast } from '../composables/useToast'
 import ScheduleGrid from '../components/ScheduleGrid.vue'
 import ScheduleChangelog from '../components/ScheduleChangelog.vue'
@@ -124,6 +151,7 @@ import ScheduleCompare from '../components/ScheduleCompare.vue'
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+const readOnly = useReadOnlyStore()
 const { showToast } = useToast()
 
 const activeTab = ref('schedule')
@@ -273,6 +301,39 @@ const getStatusText = (status: string) => {
     archived: 'Архив',
   }
   return texts[status] || status
+}
+
+const printSchedule = async (view: 'group' | 'teacher' | 'room') => {
+  // TODO: Get current filter values (groupId, teacherId, roomId)
+  // For now, prompt user for ID
+  const id = prompt(`Введите ID для ${view === 'group' ? 'группы' : view === 'teacher' ? 'преподавателя' : 'кабинета'}:`)
+  if (!id) return
+
+  try {
+    const from = new Date()
+    from.setDate(from.getDate() - from.getDay()) // Start of week
+    const to = new Date(from)
+    to.setDate(to.getDate() + 6) // End of week
+
+    const blob = await printApi.schedule({
+      view,
+      id: Number(id),
+      from: from.toISOString().split('T')[0],
+      to: to.toISOString().split('T')[0],
+      format: 'pdf',
+    })
+
+    const url = window.URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `schedule_${view}_${id}_${from.toISOString().split('T')[0]}.pdf`
+    link.click()
+    window.URL.revokeObjectURL(url)
+    showToast('PDF сгенерирован', 'success')
+  } catch (error: any) {
+    console.error('Failed to print schedule:', error)
+    showToast(error.response?.data?.message || 'Ошибка при генерации PDF', 'error')
+  }
 }
 
 // Watch route query for version_id changes

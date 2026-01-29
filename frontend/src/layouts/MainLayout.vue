@@ -1,10 +1,14 @@
 <template>
   <v-layout class="h-100">
+    <!-- Read-only Banner -->
+    <ReadOnlyBanner />
+    
     <!-- Topbar -->
     <v-app-bar app color="primary" dark>
       <v-app-bar-nav-icon @click="drawer = !drawer" />
       <v-toolbar-title>PDO</v-toolbar-title>
       <v-spacer />
+      <TenantSelector />
       <v-chip v-if="ws.connected" color="success" size="small" class="mr-2">
         <v-icon start size="small">mdi-circle</v-icon>
         WS подключен
@@ -24,6 +28,12 @@
             <v-list-item-title>Настройки уведомлений</v-list-item-title>
             <v-list-item-prepend>
               <v-icon>mdi-bell-cog</v-icon>
+            </v-list-item-prepend>
+          </v-list-item>
+          <v-list-item :to="{ name: 'settings-security' }">
+            <v-list-item-title>Безопасность</v-list-item-title>
+            <v-list-item-prepend>
+              <v-icon>mdi-shield-lock</v-icon>
             </v-list-item-prepend>
           </v-list-item>
           <v-divider />
@@ -68,6 +78,9 @@ import { useAuthStore } from '../stores/auth'
 import { useWsStore } from '../stores/ws'
 import { useRouter } from 'vue-router'
 import NotificationCenter from '../components/NotificationCenter.vue'
+import TenantSelector from '../components/TenantSelector.vue'
+import ReadOnlyBanner from '../components/ReadOnlyBanner.vue'
+import { getMenuItemsForRole, canSeeMenuItem } from '../config/menu'
 
 const drawer = ref(true)
 
@@ -76,72 +89,60 @@ const ws = useWsStore()
 const router = useRouter()
 
 const menuItems = computed(() => {
-  const items: Array<{ to: any; title: string; icon: string; divider?: boolean }> = [
-    { to: { name: 'dashboard' }, title: 'Панель управления', icon: 'mdi-view-dashboard' },
-    { to: { name: 'schedule' }, title: 'Расписание', icon: 'mdi-calendar' },
-    { to: { name: 'journal' }, title: 'Журнал', icon: 'mdi-book-open-page-variant' },
-    { to: { name: 'tasks' }, title: 'Задания', icon: 'mdi-clipboard-text' },
-    { to: { name: 'materials' }, title: 'Материалы', icon: 'mdi-file-document-multiple' },
-    { to: { name: 'notifications' }, title: 'Уведомления', icon: 'mdi-bell' },
-    { to: { name: 'chat' }, title: 'Чаты', icon: 'mdi-forum' },
-    { to: { name: 'tickets' }, title: 'Тикеты', icon: 'mdi-ticket' },
-    { to: { name: 'exams' }, title: 'Экзамены', icon: 'mdi-school' },
-    { to: { name: 'contests' }, title: 'Конкурсы', icon: 'mdi-trophy' },
-  ]
-
-  // Analytics/Risks (visible if has analytics.view permission or is student)
-  if (auth.hasPermission('analytics.view')) {
-    items.push({ to: { name: 'analytics-risks' }, title: 'Риски студентов', icon: 'mdi-alert-circle' })
-  } else {
-    // Student can see their own risks
-    items.push({ to: { name: 'my-risks' }, title: 'Мои риски', icon: 'mdi-alert-circle' })
+  if (!auth.isAuthenticated || !auth.user) {
+    return []
   }
 
-  // Documents (visible if has documents.view permission)
-  if (auth.hasPermission('documents.view')) {
-    items.push({ to: { name: 'documents' }, title: 'Документы', icon: 'mdi-file-document' })
-  }
+  // Get user roles
+  const userRoles = auth.roles.map(r => r.name)
+  const userPermissions = auth.permissions.map(p => p.code)
 
-  // KTP (visible if has curriculum.view permission)
-  if (auth.hasPermission('curriculum.view')) {
-    items.push({ to: { name: 'ktp' }, title: 'КТП', icon: 'mdi-calendar-text' })
-  }
+  // Get menu items for all user roles and merge them
+  const allMenuItems: Array<{ to: any; title: string; icon: string; divider?: boolean }> = []
+  const seenRoutes = new Set<string>()
 
-  // Admin menu items (visible if has directory.manage or users.read permission)
-  if (auth.hasPermission('directory.manage') || auth.hasPermission('users.read')) {
-    items.push({ to: null, title: 'Админка', icon: 'mdi-cog', divider: true })
+  // Process each role the user has
+  for (const roleName of userRoles) {
+    const roleMenuItems = getMenuItemsForRole(roleName)
     
-    if (auth.hasPermission('directory.manage')) {
-      items.push({ to: { name: 'admin-groups' }, title: 'Группы', icon: 'mdi-account-group' })
-      items.push({ to: { name: 'admin-subgroups' }, title: 'Подгруппы', icon: 'mdi-account-group-outline' })
-      items.push({ to: { name: 'admin-subjects' }, title: 'Предметы', icon: 'mdi-book-open-variant' })
-      items.push({ to: { name: 'admin-rooms' }, title: 'Кабинеты', icon: 'mdi-door' })
-      items.push({ to: { name: 'admin-time-slots' }, title: 'Слоты пар', icon: 'mdi-clock-outline' })
-    }
-    
-    if (auth.hasPermission('users.read')) {
-      items.push({ to: { name: 'admin-users' }, title: 'Пользователи', icon: 'mdi-account-multiple' })
-    }
-    
-    if (auth.hasPermission('rules.manage')) {
-      items.push({ to: { name: 'admin-rules' }, title: 'Правила', icon: 'mdi-auto-fix' })
-    }
-    
-    if (auth.hasPermission('tickets.manage')) {
-      items.push({ to: { name: 'admin-tickets-overdue' }, title: 'Просроченные тикеты', icon: 'mdi-alert-circle' })
-    }
-    
-    if (auth.hasPermission('documents.registry')) {
-      items.push({ to: { name: 'admin-document-templates' }, title: 'Шаблоны документов', icon: 'mdi-file-document-edit' })
-      items.push({ to: { name: 'admin-document-registry' }, title: 'Реестр документов', icon: 'mdi-book-open-variant' })
-    }
-    
-    if (auth.hasPermission('chat.moderate')) {
-      items.push({ to: { name: 'admin-chat-reports' }, title: 'Жалобы на сообщения', icon: 'mdi-alert-circle' })
+    for (const item of roleMenuItems) {
+      // Create a unique key for the route
+      const routeKey = item.to ? (item.to.name || JSON.stringify(item.to)) : item.title
+      
+      // Skip if we've already added this route (avoid duplicates)
+      if (seenRoutes.has(routeKey)) {
+        continue
+      }
+
+      // Check if user can see this menu item based on permissions
+      if (canSeeMenuItem(item, userRoles, userPermissions)) {
+        allMenuItems.push({
+          to: item.to,
+          title: item.title,
+          icon: item.icon,
+          divider: item.divider,
+        })
+        seenRoutes.add(routeKey)
+      }
     }
   }
 
-  return items.filter(item => item.to !== null)
+  // If user has no roles, show common items only
+  if (allMenuItems.length === 0) {
+    const commonItems = getMenuItemsForRole('')
+    return commonItems
+      .filter(item => canSeeMenuItem(item, userRoles, userPermissions))
+      .map(item => ({
+        to: item.to,
+        title: item.title,
+        icon: item.icon,
+        divider: item.divider,
+      }))
+      .filter(item => item.to !== null)
+  }
+
+  // Filter out null routes and return
+  return allMenuItems.filter(item => item.to !== null)
 })
 
 const onLogout = async () => {

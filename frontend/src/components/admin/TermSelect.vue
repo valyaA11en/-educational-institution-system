@@ -1,6 +1,6 @@
 <template>
   <v-select
-    v-model="modelValue"
+    :model-value="modelValue"
     :items="termOptions"
     :label="label"
     :rules="rules"
@@ -21,7 +21,7 @@ interface Props {
   rules?: any[]
 }
 
-const props = withDefaults(defineProps<Props>(), {
+withDefaults(defineProps<Props>(), {
   label: 'Семестр',
   rules: () => [],
 })
@@ -53,5 +53,12 @@ onMounted(() => {
   loadTerms()
 })
 </script>
+
+
+
+
+
+
+
 
 

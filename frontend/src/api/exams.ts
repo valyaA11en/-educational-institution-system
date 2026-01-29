@@ -24,7 +24,7 @@ export interface ExamCommissionDTO {
   id: number
   exam_id: number
   user_id: number
-  role: 'chair' | 'member'
+  role: 'chairman' | 'member' | 'secretary'
   user?: { id: number; fio: string }
 }
 
@@ -45,14 +45,6 @@ export interface ExamResultDTO {
   grade_value: number | null
   comment: string | null
   student?: { id: number; fio: string }
-}
-
-export interface ExamCommissionDTO {
-  id: number
-  exam_id: number
-  user_id: number
-  role: 'chairman' | 'member' | 'secretary'
-  user?: { id: number; fio: string }
 }
 
 export interface ExamAdmissionDTO {

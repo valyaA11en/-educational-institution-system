@@ -3,61 +3,75 @@
 namespace App\Http\Controllers\Api\Admin\Directory;
 
 use App\Http\Controllers\Controller;
-use App\Http\Requests\Admin\Directory\StoreRoomRequest;
-use App\Http\Requests\Admin\Directory\UpdateRoomRequest;
 use App\Models\Room;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Http\Response;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\Auth;
 
 class RoomsController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
-        $query = Room::query();
+        $tenantId = Auth::user()->tenant_id;
+        $rooms = Room::forTenant($tenantId)->get();
+        return response()->json(['data' => $rooms]);
+    }
 
-        if ($search = $request->query('q')) {
-            $query->where(function ($q) use ($search): void {
-                $q->where('name', 'ilike', "%{$search}%")
-                    ->orWhere('code', 'ilike', "%{$search}%");
-            });
+    public function store(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'name' => 'required|string|max:255',
+            'code' => 'required|string|max:50|unique:rooms,code',
+            'capacity' => 'nullable|integer|min:1',
+            'room_type' => 'nullable|string|max:50',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['errors' => $validator->errors()], 422);
         }
 
-        $rooms = $query->orderBy('code')->paginate($request->integer('per_page', 50));
+        $room = Room::create([
+            'name' => $request->name,
+            'code' => $request->code,
+            'capacity' => $request->capacity,
+            'room_type' => $request->room_type,
+            'tenant_id' => Auth::user()->tenant_id,
+        ]);
 
-        return response()->json($rooms);
+        return response()->json(['data' => $room], 201);
     }
 
-    public function store(StoreRoomRequest $request): JsonResponse
+    public function show(Request $request, $id): JsonResponse
     {
-        $room = Room::create($request->validated());
-
-        return response()->json($room, Response::HTTP_CREATED);
+        $tenantId = Auth::user()->tenant_id;
+        $room = Room::forTenant($tenantId)->findOrFail($id);
+        return response()->json(['data' => $room]);
     }
 
-    public function show(int $id): JsonResponse
+    public function update(Request $request, $id): JsonResponse
     {
-        $room = Room::findOrFail($id);
+        $room = Room::forTenant(Auth::user()->tenant_id)->findOrFail($id);
+        
+        $validator = Validator::make($request->all(), [
+            'name' => 'sometimes|string|max:255',
+            'code' => 'sometimes|string|max:50|unique:rooms,code,' . $id,
+            'capacity' => 'nullable|integer|min:1',
+            'room_type' => 'nullable|string|max:50',
+        ]);
 
-        return response()->json($room);
+        if ($validator->fails()) {
+            return response()->json(['errors' => $validator->errors()], 422);
+        }
+
+        $room->update($request->only(['name', 'code', 'capacity', 'room_type']));
+        return response()->json(['data' => $room]);
     }
 
-    public function update(UpdateRoomRequest $request, int $id): JsonResponse
+    public function destroy(Request $request, $id): JsonResponse
     {
-        $room = Room::findOrFail($id);
-        $room->fill($request->validated());
-        $room->save();
-
-        return response()->json($room);
-    }
-
-    public function destroy(int $id): JsonResponse
-    {
-        $room = Room::findOrFail($id);
+        $room = Room::forTenant(Auth::user()->tenant_id)->findOrFail($id);
         $room->delete();
-
-        return response()->json(null, Response::HTTP_NO_CONTENT);
+        return response()->json(['message' => 'Room deleted successfully']);
     }
 }
-
-

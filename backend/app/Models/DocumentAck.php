@@ -2,14 +2,11 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class DocumentAck extends Model
 {
-    use HasFactory;
-
     protected $table = 'document_ack';
 
     protected $fillable = [
@@ -19,22 +16,25 @@ class DocumentAck extends Model
         'confirmed_at',
     ];
 
-    protected function casts(): array
-    {
-        return [
-            'confirmed_at' => 'datetime',
-        ];
-    }
+    protected $casts = [
+        'confirmed_at' => 'datetime',
+        'created_at' => 'datetime',
+        'updated_at' => 'datetime',
+    ];
 
+    /**
+     * Get the document for this acknowledgment.
+     */
     public function document(): BelongsTo
     {
-        return $this->belongsTo(Document::class);
+        return $this->belongsTo(Document::class, 'document_id');
     }
 
+    /**
+     * Get the user for this acknowledgment.
+     */
     public function user(): BelongsTo
     {
-        return $this->belongsTo(User::class);
+        return $this->belongsTo(User::class, 'user_id');
     }
 }
-
-

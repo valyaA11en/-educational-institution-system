@@ -474,9 +474,8 @@ onMounted(() => {
   loadExam()
 
   // Subscribe to exam events
-  let examChannel: any = null
   if (echo) {
-    examChannel = echo.private(`user.${auth.user?.id}`)
+    echo.private(`user.${auth.user?.id}`)
       .listen('.exam.updated', (event: any) => {
         const payload = event.payload || {}
         if (payload.exam_id === Number(route.params.id)) {

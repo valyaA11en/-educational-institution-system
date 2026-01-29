@@ -2,13 +2,12 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class DocumentRoute extends Model
 {
-    use HasFactory;
+    protected $table = 'document_routes';
 
     protected $fillable = [
         'document_id',
@@ -20,27 +19,33 @@ class DocumentRoute extends Model
         'comment',
     ];
 
-    protected function casts(): array
-    {
-        return [
-            'decided_at' => 'datetime',
-        ];
-    }
+    protected $casts = [
+        'decided_at' => 'datetime',
+        'created_at' => 'datetime',
+        'updated_at' => 'datetime',
+    ];
 
+    /**
+     * Get the document for this route.
+     */
     public function document(): BelongsTo
     {
-        return $this->belongsTo(Document::class);
+        return $this->belongsTo(Document::class, 'document_id');
     }
 
+    /**
+     * Get the approver role.
+     */
     public function approverRole(): BelongsTo
     {
         return $this->belongsTo(Role::class, 'approver_role_id');
     }
 
+    /**
+     * Get the approver user.
+     */
     public function approverUser(): BelongsTo
     {
         return $this->belongsTo(User::class, 'approver_user_id');
     }
 }
-
-

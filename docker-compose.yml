@@ -41,193 +41,146 @@ services:
       file: ./infra/docker-compose.yml
       service: frontend
 
-volumes:
-  postgres_data:
-  redis_data:
-  minio_data:
-
-networks:
-  pdo_network:
-    driver: bridge
-
-version: '3.8'
-
-services:
-  # PostgreSQL Database
-  postgres:
-    image: postgres:16-alpine
-    container_name: pdo_postgres
+  # Monitoring Services (dev profile)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: pdo_prometheus
     restart: unless-stopped
-    environment:
-      POSTGRES_DB: ${DB_DATABASE:-laravel}
-      POSTGRES_USER: ${DB_USERNAME:-laravel}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-password}
-      PGDATA: /var/lib/postgresql/data/pgdata
+    profiles: ["dev", "monitoring"]
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
     ports:
-      - "${DB_PORT:-5432}:5432"
+      - "${PROMETHEUS_PORT:-9090}:9090"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
     networks:
       - pdo_network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-laravel}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  # Redis Cache
-  redis:
-    image: redis:7-alpine
-    container_name: pdo_redis
-    restart: unless-stopped
-    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-redis_password}
-    ports:
-      - "${REDIS_PORT:-6379}:6379"
-    volumes:
-      - redis_data:/data
-    networks:
-      - pdo_network
-    healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-redis_password}", "ping"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-
-  # MinIO (S3-compatible storage)
-  minio:
-    image: minio/minio:latest
-    container_name: pdo_minio
-    restart: unless-stopped
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
-    ports:
-      - "${MINIO_PORT:-9000}:9000"
-      - "${MINIO_CONSOLE_PORT:-9001}:9001"
-    volumes:
-      - minio_data:/data
-    networks:
-      - pdo_network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 30s
-      timeout: 20s
-      retries: 3
-
-  # MinIO Initialization
-  minio-init:
-    build:
-      context: ./infra/scripts
-      dockerfile: minio-init/Dockerfile
-    container_name: pdo_minio_init
     depends_on:
-      minio:
-        condition: service_healthy
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
-      AWS_BUCKET: ${AWS_BUCKET:-laravel}
-    networks:
-      - pdo_network
-    restart: "no"
+      - nginx
 
-  # Laravel Backend
-  backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: pdo_backend
+  grafana:
+    image: grafana/grafana:latest
+    container_name: pdo_grafana
     restart: unless-stopped
-    working_dir: /var/www/html
-    volumes:
-      - ./backend:/var/www/html
-      - ./backend/vendor:/var/www/html/vendor
-      - ./backend/node_modules:/var/www/html/node_modules
+    profiles: ["dev", "monitoring"]
     ports:
-      - "${APP_PORT:-8000}:8000"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
+      - "${GRAFANA_PORT:-3001}:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_ROOT_URL=http://localhost:3001
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
     networks:
       - pdo_network
-    environment:
-      - DB_CONNECTION=pgsql
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - DB_DATABASE=${DB_DATABASE:-laravel}
-      - DB_USERNAME=${DB_USERNAME:-laravel}
-      - DB_PASSWORD=${DB_PASSWORD:-password}
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - REDIS_PASSWORD=${REDIS_PASSWORD:-redis_password}
-      - AWS_ENDPOINT=http://minio:9000
-      - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER:-minioadmin}
-      - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
-      - AWS_DEFAULT_REGION=us-east-1
-      - AWS_BUCKET=${AWS_BUCKET:-laravel}
-      - AWS_USE_PATH_STYLE_ENDPOINT=true
-      - BROADCAST_DRIVER=redis
-      - CACHE_DRIVER=redis
-      - QUEUE_CONNECTION=redis
-      - SESSION_DRIVER=redis
+    depends_on:
+      - prometheus
 
-  # Laravel Echo Server (WebSocket)
-  websocket:
-    build:
-      context: ./websocket
-      dockerfile: Dockerfile
-    container_name: pdo_websocket
-    restart: unless-stopped
-    working_dir: /app
+  # K6 Load Testing Services
+  k6-smoke:
+    image: grafana/k6:latest
+    container_name: pdo_k6_smoke
+    profiles: ["loadtest"]
     volumes:
-      - ./websocket:/app
-      - /app/node_modules
-    ports:
-      - "${WEBSOCKET_PORT:-6001}:6001"
-    depends_on:
-      redis:
-        condition: service_healthy
-      backend:
-        condition: service_started
+      - ./loadtest/k6:/scripts
+      - ./loadtest/results:/results
+    working_dir: /scripts
+    command: run --out json=/results/smoke.json smoke.js
+    environment:
+      - BASE_URL=${BASE_URL:-http://nginx:80}
+      - EMAIL=${TEST_EMAIL:-admin@college.edu}
+      - PASSWORD=${TEST_PASSWORD:-Password123!}
     networks:
       - pdo_network
-    environment:
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - REDIS_PASSWORD=${REDIS_PASSWORD:-redis_password}
+    depends_on:
+      - nginx
 
-  # Vue 3 Frontend
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    container_name: pdo_frontend
-    restart: unless-stopped
-    working_dir: /app
+  k6-schedule:
+    image: grafana/k6:latest
+    container_name: pdo_k6_schedule
+    profiles: ["loadtest"]
     volumes:
-      - ./frontend:/app
-      - ./frontend/node_modules:/app/node_modules
-    ports:
-      - "${FRONTEND_PORT:-3000}:3000"
-    depends_on:
-      - backend
+      - ./loadtest/k6:/scripts
+      - ./loadtest/results:/results
+    working_dir: /scripts
+    command: run --out json=/results/schedule.json schedule.js
+    environment:
+      - BASE_URL=${BASE_URL:-http://nginx:80}
+      - EMAIL=${TEST_EMAIL:-scheduler@college.edu}
+      - PASSWORD=${TEST_PASSWORD:-Password123!}
     networks:
       - pdo_network
+    depends_on:
+      - nginx
+
+  k6-chat:
+    image: grafana/k6:latest
+    container_name: pdo_k6_chat
+    profiles: ["loadtest"]
+    volumes:
+      - ./loadtest/k6:/scripts
+      - ./loadtest/results:/results
+    working_dir: /scripts
+    command: run --out json=/results/chat.json chat.js
     environment:
-      - VITE_API_URL=http://localhost:8000
-      - VITE_WEBSOCKET_URL=ws://localhost:6001
+      - BASE_URL=${BASE_URL:-http://nginx:80}
+      - EMAIL=${TEST_EMAIL:-student1@college.edu}
+      - PASSWORD=${TEST_PASSWORD:-Password123!}
+    networks:
+      - pdo_network
+    depends_on:
+      - nginx
+
+  k6-assignments:
+    image: grafana/k6:latest
+    container_name: pdo_k6_assignments
+    profiles: ["loadtest"]
+    volumes:
+      - ./loadtest/k6:/scripts
+      - ./loadtest/results:/results
+    working_dir: /scripts
+    command: run --out json=/results/assignments.json assignments.js
+    environment:
+      - BASE_URL=${BASE_URL:-http://nginx:80}
+      - EMAIL=${TEST_EMAIL:-student1@college.edu}
+      - PASSWORD=${TEST_PASSWORD:-Password123!}
+    networks:
+      - pdo_network
+    depends_on:
+      - nginx
+
+  k6-documents:
+    image: grafana/k6:latest
+    container_name: pdo_k6_documents
+    profiles: ["loadtest"]
+    volumes:
+      - ./loadtest/k6:/scripts
+      - ./loadtest/results:/results
+    working_dir: /scripts
+    command: run --out json=/results/documents.json documents.js
+    environment:
+      - BASE_URL=${BASE_URL:-http://nginx:80}
+      - EMAIL=${TEST_EMAIL:-admin@college.edu}
+      - PASSWORD=${TEST_PASSWORD:-Password123!}
+    networks:
+      - pdo_network
+    depends_on:
+      - nginx
 
 volumes:
   postgres_data:
   redis_data:
   minio_data:
+  prometheus_data:
+  grafana_data:
 
 networks:
   pdo_network:
     driver: bridge
-
