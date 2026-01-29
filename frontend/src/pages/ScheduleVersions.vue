@@ -81,7 +81,7 @@
               icon="mdi-compare"
               size="small"
               variant="text"
-              @click="showCompareDialog(item.id)"
+              @click="openCompareDialog(item.id)"
             />
           </template>
         </v-data-table>
@@ -370,7 +370,7 @@ const viewChangelog = async (id: number) => {
   }
 }
 
-const showCompareDialog = (id: number) => {
+const openCompareDialog = (id: number) => {
   compareVersion1.value = id
   compareVersion2.value = null
   comparison.value = null

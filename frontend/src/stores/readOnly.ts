@@ -1,5 +1,4 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
 import apiClient from '../api/client'
 
 export const useReadOnlyStore = defineStore('readOnly', {
@@ -16,6 +15,7 @@ export const useReadOnlyStore = defineStore('readOnly', {
     async checkReadOnlyMode() {
       this.loading = true
       try {
+        // Real API call to Laravel backend
         const response = await apiClient.get('/v1/meta')
         if (response.data?.read_only !== undefined) {
           this.isReadOnly = response.data.read_only

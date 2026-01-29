@@ -31,9 +31,21 @@ const routes: RouteRecordRaw[] = [
         meta: { permission: 'schedule.read' },
       },
       {
+        path: 'schedule/list',
+        name: 'schedule-list',
+        component: () => import('../views/modules/schedule/ScheduleView.vue'),
+        meta: { permission: 'schedule.read' },
+      },
+      {
         path: 'journal',
         name: 'journal',
         component: () => import('../views/modules/journal/JournalView.vue'),
+        meta: { module: 'journal' },
+      },
+      {
+        path: 'lessons/:id/journal',
+        name: 'lesson-journal',
+        component: () => import('../pages/LessonJournal.vue'),
         meta: { module: 'journal' },
       },
       {
@@ -47,6 +59,36 @@ const routes: RouteRecordRaw[] = [
         name: 'student-timeline',
         component: () => import('../pages/StudentTimeline.vue'),
         meta: { module: 'student' },
+      },
+      {
+        path: 'students/:id/portfolio',
+        name: 'student-portfolio',
+        component: () => import('../pages/StudentPortfolio.vue'),
+        meta: { module: 'student' },
+      },
+      {
+        path: 'analytics/topics',
+        name: 'analytics-topics',
+        component: () => import('../pages/AnalyticsTopics.vue'),
+        meta: { module: 'analytics' },
+      },
+      {
+        path: 'panels/curator',
+        name: 'panel-curator',
+        component: () => import('../pages/panels/CuratorPanel.vue'),
+        meta: { module: 'panels' },
+      },
+      {
+        path: 'panels/methodist',
+        name: 'panel-methodist',
+        component: () => import('../pages/panels/MethodistPanel.vue'),
+        meta: { module: 'panels' },
+      },
+      {
+        path: 'panels/principal',
+        name: 'panel-principal',
+        component: () => import('../pages/panels/PrincipalPanel.vue'),
+        meta: { module: 'panels' },
       },
       {
         path: 'assistant',
@@ -74,7 +116,7 @@ const routes: RouteRecordRaw[] = [
       {
         path: 'notifications',
         name: 'notifications',
-        component: () => import('../pages/Notifications.vue'),
+        component: () => import('../views/modules/notifications/NotificationsView.vue'),
         meta: { module: 'notifications' },
       },
       {
@@ -170,6 +212,12 @@ const routes: RouteRecordRaw[] = [
         component: () => import('../pages/TicketView.vue'),
       },
       {
+        path: 'reports',
+        name: 'reports',
+        component: () => import('../pages/Reports.vue'),
+        meta: { permission: 'reports.view' },
+      },
+      {
         path: 'analytics/risks',
         name: 'analytics-risks',
         component: () => import('../pages/AnalyticsRisks.vue'),
@@ -247,6 +295,18 @@ const routes: RouteRecordRaw[] = [
             path: 'webhooks',
             name: 'admin-webhooks',
             component: () => import('../pages/admin/Webhooks.vue'),
+            meta: { role: 'admin' },
+          },
+          {
+            path: 'audit',
+            name: 'admin-audit',
+            component: () => import('../pages/admin/AdminAuditList.vue'),
+            meta: { role: 'admin' },
+          },
+          {
+            path: 'audit/:id',
+            name: 'admin-audit-detail',
+            component: () => import('../pages/admin/AdminAuditDetail.vue'),
             meta: { role: 'admin' },
           },
         ],

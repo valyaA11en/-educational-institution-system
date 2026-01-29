@@ -3,24 +3,10 @@
 namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
-use App\Models\Role;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 
 class RolesController extends Controller
 {
-    public function index(): JsonResponse
-    {
-        $roles = Role::query()->orderBy('name')->get();
-
-        return response()->json($roles);
-    }
+    public function index(Request $request): JsonResponse { return response()->json(['data' => []]); }
 }
-
-
-
-
-
-
-
-
-

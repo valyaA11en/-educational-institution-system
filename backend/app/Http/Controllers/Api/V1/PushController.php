@@ -3,92 +3,62 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
-use App\Models\PushSubscription;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Validator;
 
 class PushController extends Controller
 {
     public function subscribe(Request $request): JsonResponse
     {
-        $validated = $request->validate([
-            'endpoint' => ['required', 'string', 'url', 'max:512'],
-            'keys' => ['required', 'array'],
-            'keys.p256dh' => ['required', 'string'],
-            'keys.auth' => ['required', 'string'],
+        $v = Validator::make($request->all(), [
+            'endpoint' => 'required|string|max:512',
+            'keys' => 'required|array',
+            'keys.p256dh' => 'required|string',
+            'keys.auth' => 'required|string',
         ]);
-
-        $user = auth()->user();
-
-        // Check if subscription already exists
-        $subscription = PushSubscription::where('user_id', $user->id)
-            ->where('endpoint', $validated['endpoint'])
-            ->first();
-
-        if ($subscription) {
-            // Update existing subscription
-            $subscription->update([
-                'keys_json' => [
-                    'p256dh' => $validated['keys']['p256dh'],
-                    'auth' => $validated['keys']['auth'],
-                ],
-            ]);
-
-            return response()->json([
-                'message' => 'Push subscription updated',
-                'subscription' => $subscription,
+        if ($v->fails()) {
+            return response()->json(['message' => 'Validation errors', 'errors' => $v->errors()], 422);
+        }
+        $userId = (int) auth()->id();
+        $endpoint = $request->endpoint;
+        $keys = json_encode($request->keys);
+        $exists = DB::table('push_subscriptions')->where('endpoint', $endpoint)->first();
+        if ($exists) {
+            if ((int) $exists->user_id !== $userId) {
+                DB::table('push_subscriptions')->where('endpoint', $endpoint)->update([
+                    'user_id' => $userId,
+                    'keys_json' => $keys,
+                    'updated_at' => now(),
+                ]);
+            }
+        } else {
+            DB::table('push_subscriptions')->insert([
+                'user_id' => $userId,
+                'endpoint' => $endpoint,
+                'keys_json' => $keys,
+                'created_at' => now(),
+                'updated_at' => now(),
             ]);
         }
-
-        // Create new subscription
-        $subscription = PushSubscription::create([
-            'user_id' => $user->id,
-            'endpoint' => $validated['endpoint'],
-            'keys_json' => [
-                'p256dh' => $validated['keys']['p256dh'],
-                'auth' => $validated['keys']['auth'],
-            ],
-        ]);
-
-        Log::info('Push subscription created', [
-            'user_id' => $user->id,
-            'endpoint' => $validated['endpoint'],
-        ]);
-
-        return response()->json([
-            'message' => 'Push subscription created',
-            'subscription' => $subscription,
-        ], 201);
+        return response()->json(['message' => 'Subscribed']);
     }
 
     public function unsubscribe(Request $request): JsonResponse
     {
-        $validated = $request->validate([
-            'endpoint' => ['required', 'string', 'url', 'max:512'],
+        $endpoint = $request->input('endpoint') ?? $request->query('endpoint');
+        $v = Validator::make(['endpoint' => $endpoint], [
+            'endpoint' => 'required|string|max:512',
         ]);
-
-        $user = auth()->user();
-
-        $subscription = PushSubscription::where('user_id', $user->id)
-            ->where('endpoint', $validated['endpoint'])
-            ->first();
-
-        if ($subscription) {
-            $subscription->delete();
-
-            Log::info('Push subscription deleted', [
-                'user_id' => $user->id,
-                'endpoint' => $validated['endpoint'],
-            ]);
-
-            return response()->json([
-                'message' => 'Push subscription removed',
-            ]);
+        if ($v->fails()) {
+            return response()->json(['message' => 'Validation errors', 'errors' => $v->errors()], 422);
         }
-
-        return response()->json([
-            'message' => 'Subscription not found',
-        ], 404);
+        $userId = (int) auth()->id();
+        $n = DB::table('push_subscriptions')
+            ->where('endpoint', $endpoint)
+            ->where('user_id', $userId)
+            ->delete();
+        return response()->json(['message' => $n ? 'Unsubscribed' : 'OK']);
     }
 }

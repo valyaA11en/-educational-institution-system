@@ -48,5 +48,18 @@ export const filesApi = {
     })
     return response.data
   },
+
+  delete: async (fileId: number): Promise<void> => {
+    await apiClient.delete(`/v1/files/${fileId}`)
+  },
+
+  /** Direct upload (multipart) after getPresignedUploadUrl. Use upload_url or this. */
+  upload: async (fileId: number, file: File): Promise<{ file: FileDTO }> => {
+    const form = new FormData()
+    form.append('file_id', String(fileId))
+    form.append('file', file)
+    const { data } = await apiClient.post<{ file: FileDTO }>('/v1/files/upload', form)
+    return { file: data?.file ?? data }
+  },
 }
 

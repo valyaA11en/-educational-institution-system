@@ -4,9 +4,11 @@ WORKDIR /app
 
 RUN apk add --no-cache bash
 
-COPY ../frontend/package.json ../frontend/package-lock.json* ./ 2>/dev/null || true
+# Копируем package.json и package-lock.json если они есть
+COPY frontend/package.json frontend/package-lock.json* ./
 
-RUN if [ -f package.json ]; then npm install; fi
+# Устанавливаем зависимости если есть package.json
+RUN if [ -f package.json ]; then npm ci --only=production || npm install; fi
 
 # Код монтируется томом в dev-режиме
 

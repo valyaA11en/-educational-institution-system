@@ -1,6 +1,7 @@
 <?php
 
 return [
+
     /*
     |--------------------------------------------------------------------------
     | Cross-Origin Resource Sharing (CORS) Configuration
@@ -18,16 +19,12 @@ return [
 
     'allowed_methods' => ['*'],
 
-    'allowed_origins' => array_filter([
-        env('FRONTEND_URL', 'http://localhost:8000'),
-        env('FRONTEND_URL_ALT', null),
-        // In dev, allow localhost with different ports
-        ...(app()->environment(['local', 'dev', 'development']) ? [
-            'http://localhost:3000',
-            'http://localhost:5173',
-            'http://localhost:8000',
-        ] : []),
-    ]),
+    'allowed_origins' => [
+        'http://localhost:8000',  // Backend
+        'http://localhost:5173',  // Frontend development
+        'http://127.0.0.1:8000',
+        'http://127.0.0.1:5173',
+    ],
 
     'allowed_origins_patterns' => [],
 
@@ -38,5 +35,5 @@ return [
     'max_age' => 0,
 
     'supports_credentials' => true,
-];
 
+];

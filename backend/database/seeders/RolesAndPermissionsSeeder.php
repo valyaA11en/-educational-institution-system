@@ -128,7 +128,6 @@ class RolesAndPermissionsSeeder extends Seeder
                 ['email' => 'admin@example.com'],
                 [
                     'fio' => 'Admin User',
-                    'phone' => null,
                     'password_hash' => Hash::make('admin123'),
                     'status' => 'active',
                 ],
@@ -138,7 +137,6 @@ class RolesAndPermissionsSeeder extends Seeder
                 ['email' => 'teacher@example.com'],
                 [
                     'fio' => 'Teacher User',
-                    'phone' => null,
                     'password_hash' => Hash::make('teacher123'),
                     'status' => 'active',
                 ],
@@ -148,7 +146,6 @@ class RolesAndPermissionsSeeder extends Seeder
                 ['email' => 'student@example.com'],
                 [
                     'fio' => 'Student User',
-                    'phone' => null,
                     'password_hash' => Hash::make('student123'),
                     'status' => 'active',
                 ],
@@ -158,7 +155,6 @@ class RolesAndPermissionsSeeder extends Seeder
                 ['email' => 'parent@example.com'],
                 [
                     'fio' => 'Parent User',
-                    'phone' => null,
                     'password_hash' => Hash::make('parent123'),
                     'status' => 'active',
                 ],

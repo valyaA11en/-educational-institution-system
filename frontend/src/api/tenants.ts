@@ -60,11 +60,13 @@ export const tenantsApi = {
   },
 
   getCurrent: async (): Promise<TenantDTO> => {
+    // Real API call to Laravel backend
     const response = await apiClient.get<TenantDTO>('/v1/tenant/current')
     return response.data
   },
 
   getUserTenants: async (): Promise<TenantDTO[]> => {
+    // Real API call to Laravel backend
     const response = await apiClient.get<TenantDTO[]>('/v1/tenant/list')
     return response.data
   },

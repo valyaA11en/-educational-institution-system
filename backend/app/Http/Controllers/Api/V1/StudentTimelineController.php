@@ -3,159 +3,55 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
-use App\Services\StudentTimelineService;
-use App\Models\User;
-use App\Models\Group;
+use App\Services\ImportExportService;
+use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
+use Illuminate\Http\StreamedResponse;
+use Illuminate\Support\Facades\DB;
 
 class StudentTimelineController extends Controller
 {
-    public function __construct(
-        private StudentTimelineService $timelineService
-    ) {}
-
-    public function index(int $studentId, Request $request): JsonResponse
+    public function index(Request $request, $id): JsonResponse
     {
-        $user = Auth::user();
-
-        // Проверка прав доступа
-        if (!$this->canViewTimeline($user, $studentId)) {
-            return response()->json(['message' => 'Forbidden'], 403);
+        $tenantId = (int) auth()->user()->tenant_id;
+        $user = DB::table('users')->where('id', $id)->where('tenant_id', $tenantId)->first();
+        if (!$user) {
+            return response()->json(['message' => 'Student not found'], 404);
         }
-
-        $filters = [];
-        
-        if ($request->has('dateFrom')) {
-            $filters['dateFrom'] = $request->input('dateFrom');
-        }
-
-        if ($request->has('dateTo')) {
-            $filters['dateTo'] = $request->input('dateTo');
-        }
-
-        if ($request->has('event_type')) {
-            $eventTypes = $request->input('event_type');
-            if (is_string($eventTypes)) {
-                $eventTypes = explode(',', $eventTypes);
-            }
-            if (is_array($eventTypes)) {
-                $filters['event_type'] = array_filter($eventTypes);
-            }
-        }
-
-        $timeline = $this->timelineService->getTimeline($studentId, $filters);
-
-        return response()->json(['data' => $timeline]);
+        $grades = DB::table('grades')
+            ->where('student_user_id', $id)
+            ->where('tenant_id', $tenantId)
+            ->orderByDesc('created_at')
+            ->limit(100)
+            ->get();
+        return response()->json(['data' => ['grades' => $grades]]);
     }
 
-    public function export(int $studentId, Request $request): \Symfony\Component\HttpFoundation\Response
+    public function export(Request $request, $id): StreamedResponse|JsonResponse
     {
-        $user = Auth::user();
-
-        // Проверка прав доступа
-        if (!$this->canViewTimeline($user, $studentId)) {
-            return response()->json(['message' => 'Forbidden'], 403);
+        $tenantId = (int) auth()->user()->tenant_id;
+        $user = DB::table('users')->where('id', $id)->where('tenant_id', $tenantId)->first();
+        if (!$user) {
+            return response()->json(['message' => 'Student not found'], 404);
         }
 
-        $filters = [];
-        
-        if ($request->has('dateFrom')) {
-            $filters['dateFrom'] = $request->input('dateFrom');
-        }
+        $filename = 'timeline_' . $id . '_' . Carbon::now()->format('Y-m-d_His') . '.csv';
 
-        if ($request->has('dateTo')) {
-            $filters['dateTo'] = $request->input('dateTo');
-        }
-
-        if ($request->has('event_type')) {
-            $eventTypes = $request->input('event_type');
-            if (is_string($eventTypes)) {
-                $eventTypes = explode(',', $eventTypes);
-            }
-            if (is_array($eventTypes)) {
-                $filters['event_type'] = array_filter($eventTypes);
-            }
-        }
-
-        $timeline = $this->timelineService->getTimeline($studentId, $filters);
-        $student = \App\Models\User::findOrFail($studentId);
-        $groups = $student->groups()->get();
-        $tenant = app('tenant') ?? \App\Models\Tenant::first();
-
-        // Группировка по месяцам
-        $groupedByMonth = [];
-        foreach ($timeline as $event) {
-            $date = \Carbon\Carbon::createFromFormat('Y-m-d', $event['event_date']);
-            $monthKey = $date->format('Y-m');
-            $monthLabel = $date->locale('ru')->translatedFormat('F Y');
-            
-            if (!isset($groupedByMonth[$monthKey])) {
-                $groupedByMonth[$monthKey] = [
-                    'label' => $monthLabel,
-                    'events' => [],
-                ];
-            }
-            
-            $groupedByMonth[$monthKey]['events'][] = $event;
-        }
-
-        $data = [
-            'tenant' => $tenant,
-            'student' => $student,
-            'groups' => $groups,
-            'timeline' => $groupedByMonth,
-            'filters' => $filters,
-            'export_date' => now(),
-        ];
-
-        $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView('print.student_timeline', $data);
-        $filename = sprintf('timeline_%s_%s.pdf', $studentId, now()->format('Y-m-d'));
-
-        return $pdf->download($filename);
-    }
-
-    /**
-     * Проверка прав на просмотр timeline
-     */
-    protected function canViewTimeline($user, int $studentId): bool
-    {
-        // Админ и методист могут видеть всё
-        if ($user->hasRole('admin') || $user->hasRole('методист')) {
-            return true;
-        }
-
-        // Студент может видеть только свой timeline
-        if ($user->id === $studentId) {
-            $isStudent = $user->hasRole('student') || $user->hasRole('студент');
-            if ($isStudent) {
-                return true;
-            }
-        }
-
-        // Родитель может видеть timeline своих детей
-        // TODO: Реализовать связь родитель-ребёнок в модели User
-        // if ($user->hasRole('родитель') || $user->hasRole('parent')) {
-        //     $children = $user->children()->pluck('id')->toArray();
-        //     if (in_array($studentId, $children)) {
-        //         return true;
-        //     }
-        // }
-
-        // Куратор может видеть timeline студентов своей группы
-        if ($user->hasRole('преподаватель') || $user->hasRole('teacher')) {
-            $student = User::find($studentId);
-            if ($student) {
-                $studentGroups = $student->groups()->pluck('groups.id')->toArray();
-                $userGroups = $user->groups()->wherePivot('role_in_group', 'curator')->pluck('groups.id')->toArray();
-                
-                if (count(array_intersect($studentGroups, $userGroups)) > 0) {
-                    return true;
+        return response()->streamDownload(
+            function () use ($tenantId, $id): void {
+                $service = app(ImportExportService::class);
+                echo "\xEF\xBB\xBF";
+                foreach ($service->timelineExportCsv($tenantId, (int) $id) as $line) {
+                    echo $line;
                 }
-            }
-        }
-
-        return false;
+            },
+            $filename,
+            [
+                'Content-Type' => 'text/csv; charset=UTF-8',
+                'Content-Disposition' => 'attachment; filename="' . $filename . '"',
+            ],
+            'attachment'
+        );
     }
 }

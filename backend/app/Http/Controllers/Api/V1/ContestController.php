@@ -3,507 +3,476 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
-use App\Models\Contest;
-use App\Models\ContestJury;
-use App\Models\ContestResult;
-use App\Models\ContestRubric;
-use App\Models\ContestScore;
-use App\Models\ContestSubmission;
-use App\Models\ContestTarget;
-use App\Models\File;
-use App\Http\Controllers\Api\V1\WebhookController;
-use App\Services\NotificationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use App\Support\Events\EventTypes;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Validator;
 
 class ContestController extends Controller
 {
-    public function __construct(
-        private NotificationService $notificationService
-    ) {}
     public function index(Request $request): JsonResponse
     {
-        $query = Contest::with(['creator', 'targets']);
-
-        $user = auth()->user();
-
-        // Filter by visibility_scope
-        $query->where(function ($q) use ($user) {
-            $q->where('visibility_scope', 'all')
-                ->orWhere(function ($q2) use ($user) {
-                    $q2->where('visibility_scope', 'group')
-                        ->whereHas('targets', function ($tq) use ($user) {
-                            $tq->where('group_id', $user->group_id);
-                        });
-                })
-                ->orWhere(function ($q3) use ($user) {
-                    $q3->where('visibility_scope', 'invite')
-                        ->whereHas('targets', function ($tq) use ($user) {
-                            $tq->where('user_id', $user->id);
-                        });
-                });
-        });
-
-        if ($visibility = $request->query('visibility_scope')) {
-            $query->where('visibility_scope', $visibility);
-        }
-
-        // Filter by active
-        if ($request->boolean('active')) {
-            $now = now();
-            $query->where('start_at', '<=', $now)
-                  ->where('end_at', '>=', $now);
-        }
-
-        $contests = $query->orderBy('start_at', 'desc')
-            ->paginate($request->integer('per_page', 20));
-
-        return response()->json($contests);
+        $tenantId = (int) auth()->user()->tenant_id;
+        $q = DB::table('contests')
+            ->when(Schema::hasColumn('contests', 'tenant_id'), fn ($q) => $q->where('tenant_id', $tenantId))
+            ->orderBy('end_at');
+        $items = $q->get();
+        return response()->json(['data' => $items]);
     }
 
     public function store(Request $request): JsonResponse
     {
-        $validated = $request->validate([
-            'title' => ['required', 'string', 'max:255'],
-            'description' => ['nullable', 'string'],
-            'start_at' => ['required', 'date'],
-            'end_at' => ['required', 'date', 'after:start_at'],
-            'visibility_scope' => ['required', 'in:all,group,invite'],
-            'targets' => ['nullable', 'array'],
-            'targets.*.group_id' => ['nullable', 'integer', 'exists:groups,id'],
-            'targets.*.user_id' => ['nullable', 'integer', 'exists:users,id'],
+        $v = Validator::make($request->all(), [
+            'title' => 'required|string|max:255',
+            'description' => 'nullable|string|max:65535',
+            'start_at' => 'required|date',
+            'end_at' => 'required|date|after:start_at',
+            'visibility_scope' => 'nullable|in:all,group,invite',
         ]);
-
-        $contest = Contest::create([
-            'title' => $validated['title'],
-            'description' => $validated['description'] ?? null,
-            'start_at' => $validated['start_at'],
-            'end_at' => $validated['end_at'],
-            'visibility_scope' => $validated['visibility_scope'],
+        if ($v->fails()) {
+            return response()->json(['message' => 'Validation errors', 'errors' => $v->errors()], 422);
+        }
+        $tenantId = (int) auth()->user()->tenant_id;
+        $payload = [
+            'title' => $request->title,
+            'description' => $request->description,
+            'start_at' => $request->start_at,
+            'end_at' => $request->end_at,
+            'visibility_scope' => $request->visibility_scope ?? 'all',
             'created_by' => auth()->id(),
-        ]);
+            'created_at' => now(),
+            'updated_at' => now(),
+        ];
+        if (Schema::hasColumn('contests', 'tenant_id')) {
+            $payload['tenant_id'] = $tenantId;
+        }
+        $id = DB::table('contests')->insertGetId($payload);
+        $row = DB::table('contests')->where('id', $id)->first();
+        return response()->json(['data' => $row], 201);
+    }
 
-        // Create targets
-        if (!empty($validated['targets'])) {
-            foreach ($validated['targets'] as $target) {
-                ContestTarget::create([
-                    'contest_id' => $contest->id,
-                    'group_id' => $target['group_id'] ?? null,
-                    'user_id' => $target['user_id'] ?? null,
-                ]);
+    public function show(Request $request, $id): JsonResponse
+    {
+        $tenantId = (int) auth()->user()->tenant_id;
+        $c = DB::table('contests')->where('id', $id)
+            ->when(Schema::hasColumn('contests', 'tenant_id'), fn ($q) => $q->where('tenant_id', $tenantId))
+            ->first();
+        if (!$c) {
+            return response()->json(['message' => 'Contest not found'], 404);
+        }
+        return response()->json(['data' => $c]);
+    }
+
+    public function update(Request $request, $id): JsonResponse
+    {
+        $v = Validator::make($request->all(), [
+            'title' => 'sometimes|string|max:255',
+            'description' => 'nullable|string|max:65535',
+            'start_at' => 'sometimes|date',
+            'end_at' => 'sometimes|date',
+            'visibility_scope' => 'sometimes|in:all,group,invite',
+        ]);
+        if ($v->fails()) {
+            return response()->json(['message' => 'Validation errors', 'errors' => $v->errors()], 422);
+        }
+        $tenantId = (int) auth()->user()->tenant_id;
+        $c = DB::table('contests')->where('id', $id)
+            ->when(Schema::hasColumn('contests', 'tenant_id'), fn ($q) => $q->where('tenant_id', $tenantId))
+            ->first();
+        if (!$c) {
+            return response()->json(['message' => 'Contest not found'], 404);
+        }
+        $upd = array_filter([
+            'title' => $request->title,
+            'description' => $request->description,
+            'start_at' => $request->start_at,
+            'end_at' => $request->end_at,
+            'visibility_scope' => $request->visibility_scope,
+        ], fn ($x) => $x !== null);
+        $upd['updated_at'] = now();
+        DB::table('contests')->where('id', $id)->update($upd);
+        $row = DB::table('contests')->where('id', $id)->first();
+        return response()->json(['data' => $row]);
+    }
+
+    public function destroy(Request $request, $id): JsonResponse
+    {
+        $tenantId = (int) auth()->user()->tenant_id;
+        $c = DB::table('contests')->where('id', $id)
+            ->when(Schema::hasColumn('contests', 'tenant_id'), fn ($q) => $q->where('tenant_id', $tenantId))
+            ->first();
+        if (!$c) {
+            return response()->json(['message' => 'Contest not found'], 404);
+        }
+        DB::table('contests')->where('id', $id)->delete();
+        return response()->json(['message' => 'Deleted']);
+    }
+
+    public function setTargets(Request $request, $id): JsonResponse
+    {
+        $v = Validator::make($request->all(), [
+            'targets' => 'required|array|min:1',
+            'targets.*.group_id' => 'nullable|exists:groups,id',
+            'targets.*.user_id' => 'nullable|exists:users,id',
+        ]);
+        if ($v->fails()) {
+            return response()->json(['message' => 'Validation errors', 'errors' => $v->errors()], 422);
+        }
+        $tenantId = (int) auth()->user()->tenant_id;
+        $c = $this->contest($id, $tenantId);
+        if (!$c) {
+            return response()->json(['message' => 'Contest not found'], 404);
+        }
+        DB::table('contest_targets')->where('contest_id', $id)->delete();
+        foreach ($request->targets as $t) {
+            $gid = $t['group_id'] ?? null;
+            $uid = $t['user_id'] ?? null;
+            if (!$gid && !$uid) {
+                continue;
             }
-        }
-
-        WebhookController::trigger(EventTypes::CONTEST_CREATED, [
-            'contest_id' => $contest->id,
-            'title' => $contest->title,
-        ]);
-
-        return response()->json($contest->load(['creator', 'targets']), 201);
-    }
-
-    public function show(int $id): JsonResponse
-    {
-        $contest = Contest::with([
-            'creator', 'targets.group', 'targets.user',
-            'submissions.participant', 'submissions.files',
-            'jury.user', 'rubrics', 'results.submission'
-        ])->findOrFail($id);
-
-        $this->authorize('view', $contest);
-
-        return response()->json($contest);
-    }
-
-    public function update(Request $request, int $id): JsonResponse
-    {
-        $contest = Contest::findOrFail($id);
-        $this->authorize('update', $contest);
-
-        $validated = $request->validate([
-            'title' => ['sometimes', 'string', 'max:255'],
-            'description' => ['nullable', 'string'],
-            'start_at' => ['sometimes', 'date'],
-            'end_at' => ['sometimes', 'date'],
-            'visibility_scope' => ['sometimes', 'in:all,group,invite'],
-        ]);
-
-        $contest->update($validated);
-
-        WebhookController::trigger(EventTypes::CONTEST_UPDATED, [
-            'contest_id' => $contest->id,
-            'title' => $contest->title,
-        ]);
-
-        return response()->json($contest->load(['creator', 'targets']));
-    }
-
-    public function destroy(int $id): JsonResponse
-    {
-        $contest = Contest::findOrFail($id);
-        $this->authorize('delete', $contest);
-
-        $contest->delete();
-
-        return response()->json(['message' => 'Contest deleted']);
-    }
-
-    public function submit(Request $request, int $id): JsonResponse
-    {
-        $contest = Contest::findOrFail($id);
-        $this->authorize('submit', $contest);
-
-        // Check if contest is active
-        if (now() < $contest->start_at || now() > $contest->end_at) {
-            return response()->json(['message' => 'Contest is not active'], 400);
-        }
-
-        $validated = $request->validate([
-            'title' => ['nullable', 'string', 'max:255'],
-            'description' => ['nullable', 'string'],
-            'fileIds' => ['required', 'array'],
-            'fileIds.*' => ['integer', 'exists:files,id'],
-        ]);
-
-        $submission = ContestSubmission::create([
-            'contest_id' => $id,
-            'participant_user_id' => auth()->id(),
-            'title' => $validated['title'] ?? null,
-            'description' => $validated['description'] ?? null,
-        ]);
-
-        // Attach files
-        foreach ($validated['fileIds'] as $fileId) {
-            DB::table('contest_submission_files')->insert([
-                'submission_id' => $submission->id,
-                'file_id' => $fileId,
+            DB::table('contest_targets')->insertOrIgnore([
+                'contest_id' => $id,
+                'group_id' => $gid,
+                'user_id' => $uid,
                 'created_at' => now(),
                 'updated_at' => now(),
             ]);
         }
-
-        WebhookController::trigger(EventTypes::CONTEST_SUBMISSION, [
-            'contest_id' => $id,
-            'submission_id' => $submission->id,
-            'user_id' => auth()->id(),
-        ]);
-
-        return response()->json($submission->load(['participant', 'files']), 201);
+        return response()->json(['message' => 'OK']);
     }
 
-    public function addJury(Request $request, int $id): JsonResponse
+    public function addJury(Request $request, $id): JsonResponse
     {
-        $contest = Contest::findOrFail($id);
-        $this->authorize('update', $contest);
-
-        $validated = $request->validate([
-            'user_id' => ['required', 'integer', 'exists:users,id'],
-            'role' => ['required', 'in:chair,member'],
+        $v = Validator::make($request->all(), [
+            'user_id' => 'required|exists:users,id',
+            'role' => 'nullable|in:chair,member',
         ]);
-
-        $jury = ContestJury::updateOrCreate(
-            ['contest_id' => $id, 'user_id' => $validated['user_id']],
-            ['role' => $validated['role']]
-        );
-
-        return response()->json($jury->load('user'));
-    }
-
-    public function addRubric(Request $request, int $id): JsonResponse
-    {
-        $contest = Contest::findOrFail($id);
-        $this->authorize('update', $contest);
-
-        $validated = $request->validate([
-            'title' => ['required', 'string', 'max:255'],
-            'criteria_json' => ['required', 'array'],
-            'criteria_json.*.key' => ['required', 'string'],
-            'criteria_json.*.title' => ['required', 'string'],
-            'criteria_json.*.maxScore' => ['required', 'numeric', 'min:0'],
-            'criteria_json.*.weight' => ['nullable', 'numeric', 'min:0', 'max:1'],
-        ]);
-
-        $rubric = ContestRubric::create([
-            'contest_id' => $id,
-            'title' => $validated['title'],
-            'criteria_json' => $validated['criteria_json'],
-        ]);
-
-        return response()->json($rubric, 201);
-    }
-
-    public function score(Request $request, int $id, int $submissionId): JsonResponse
-    {
-        $contest = Contest::findOrFail($id);
-        $submission = ContestSubmission::where('contest_id', $id)->findOrFail($submissionId);
-        $this->authorize('score', $contest);
-
-        $validated = $request->validate([
-            'rubric_json' => ['required', 'array'],
-            'comment' => ['nullable', 'string'],
-        ]);
-
-        // Calculate total score from rubric_json
-        $rubric = ContestRubric::where('contest_id', $id)->first();
-        if (!$rubric) {
-            return response()->json(['message' => 'Rubric not found'], 404);
+        if ($v->fails()) {
+            return response()->json(['message' => 'Validation errors', 'errors' => $v->errors()], 422);
         }
-
-        $totalScore = 0;
-        foreach ($rubric->criteria_json as $criterion) {
-            $key = $criterion['key'];
-            $score = $validated['rubric_json'][$key] ?? 0;
-            $weight = $criterion['weight'] ?? 1;
-            $totalScore += ($score / $criterion['maxScore']) * 100 * $weight;
+        $tenantId = (int) auth()->user()->tenant_id;
+        $c = $this->contest($id, $tenantId);
+        if (!$c) {
+            return response()->json(['message' => 'Contest not found'], 404);
         }
-
-        $score = ContestScore::updateOrCreate(
-            [
-                'contest_id' => $id,
-                'submission_id' => $submissionId,
-                'jury_user_id' => auth()->id(),
-            ],
-            [
-                'rubric_json' => $validated['rubric_json'],
-                'total_score' => $totalScore,
-                'comment' => $validated['comment'] ?? null,
-            ]
-        );
-
-        return response()->json($score->load('juryUser'));
-    }
-
-    private function calculateResults(int $id): void
-    {
-        $contest = Contest::findOrFail($id);
-
-        $submissions = ContestSubmission::where('contest_id', $id)
-            ->with('scores')
-            ->get();
-
-        DB::transaction(function () use ($contest, $submissions) {
-            foreach ($submissions as $submission) {
-                // Calculate average total_score from all jury scores
-                $avgScore = ContestScore::where('submission_id', $submission->id)
-                    ->avg('total_score') ?? 0;
-
-                ContestResult::updateOrCreate(
-                    ['contest_id' => $contest->id, 'submission_id' => $submission->id],
-                    [
-                        'final_score' => $avgScore,
-                    ]
-                );
-            }
-
-            // Calculate places
-            $results = ContestResult::where('contest_id', $contest->id)
-                ->orderBy('final_score', 'desc')
-                ->get();
-
-            $place = 1;
-            foreach ($results as $result) {
-                $result->update(['place' => $place++]);
-            }
-        });
-    }
-
-    public function setTargets(Request $request, int $id): JsonResponse
-    {
-        $contest = Contest::findOrFail($id);
-        $this->authorize('update', $contest);
-
-        $validated = $request->validate([
-            'targets' => ['required', 'array'],
-            'targets.*.group_id' => ['nullable', 'integer', 'exists:groups,id'],
-            'targets.*.user_id' => ['nullable', 'integer', 'exists:users,id'],
+        DB::table('contest_jury')->insertOrIgnore([
+            'contest_id' => $id,
+            'user_id' => $request->user_id,
+            'role' => $request->role ?? 'member',
+            'created_at' => now(),
+            'updated_at' => now(),
         ]);
+        return response()->json(['message' => 'OK']);
+    }
 
-        // Delete existing targets
-        ContestTarget::where('contest_id', $id)->delete();
+    public function addRubric(Request $request, $id): JsonResponse
+    {
+        $v = Validator::make($request->all(), [
+            'title' => 'required|string|max:255',
+            'criteria_json' => 'required|array',
+            'criteria_json.*.key' => 'required|string|max:64',
+            'criteria_json.*.title' => 'required|string|max:255',
+            'criteria_json.*.maxScore' => 'required|numeric|min:0',
+        ]);
+        if ($v->fails()) {
+            return response()->json(['message' => 'Validation errors', 'errors' => $v->errors()], 422);
+        }
+        $tenantId = (int) auth()->user()->tenant_id;
+        $c = $this->contest($id, $tenantId);
+        if (!$c) {
+            return response()->json(['message' => 'Contest not found'], 404);
+        }
+        $criteria = array_map(fn ($c) => [
+            'key' => $c['key'],
+            'title' => $c['title'],
+            'maxScore' => (float) $c['maxScore'],
+            'weight' => $c['weight'] ?? 1,
+        ], $request->criteria_json);
+        DB::table('contest_rubrics')->insert([
+            'contest_id' => $id,
+            'title' => $request->title,
+            'criteria_json' => json_encode($criteria),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        return response()->json(['message' => 'OK']);
+    }
 
-        // Create new targets
-        foreach ($validated['targets'] as $target) {
-            ContestTarget::create([
-                'contest_id' => $id,
-                'group_id' => $target['group_id'] ?? null,
-                'user_id' => $target['user_id'] ?? null,
+    public function submit(Request $request, $id): JsonResponse
+    {
+        $v = Validator::make($request->all(), [
+            'title' => 'nullable|string|max:255',
+            'description' => 'nullable|string|max:65535',
+            'file_ids' => 'nullable|array',
+            'file_ids.*' => 'exists:files,id',
+        ]);
+        if ($v->fails()) {
+            return response()->json(['message' => 'Validation errors', 'errors' => $v->errors()], 422);
+        }
+        $tenantId = (int) auth()->user()->tenant_id;
+        $userId = (int) auth()->id();
+        $c = $this->contest($id, $tenantId);
+        if (!$c) {
+            return response()->json(['message' => 'Contest not found'], 404);
+        }
+        $now = now();
+        if ($now->lt($c->start_at) || $now->gt($c->end_at)) {
+            return response()->json(['message' => 'Contest not open for submissions'], 422);
+        }
+        $sub = DB::table('contest_submissions')
+            ->where('contest_id', $id)
+            ->where('participant_user_id', $userId)
+            ->first();
+        if ($sub) {
+            return response()->json(['message' => 'Already submitted'], 422);
+        }
+        $subId = DB::table('contest_submissions')->insertGetId([
+            'contest_id' => $id,
+            'participant_user_id' => $userId,
+            'title' => $request->title,
+            'description' => $request->description,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        foreach ($request->file_ids ?? [] as $fid) {
+            DB::table('contest_submission_files')->insertOrIgnore([
+                'submission_id' => $subId,
+                'file_id' => $fid,
+                'created_at' => now(),
+                'updated_at' => now(),
             ]);
         }
-
-        return response()->json(['message' => 'Targets updated']);
+        $row = DB::table('contest_submissions')->where('id', $subId)->first();
+        return response()->json(['data' => $row], 201);
     }
 
-    public function getSubmissions(int $id): JsonResponse
+    public function getSubmissions(Request $request, $id): JsonResponse
     {
-        $contest = Contest::findOrFail($id);
-        $this->authorize('view', $contest);
-
-        $submissions = ContestSubmission::where('contest_id', $id)
-            ->with(['participant', 'files', 'scores.juryUser', 'result'])
-            ->get();
-
-        return response()->json($submissions);
+        $tenantId = (int) auth()->user()->tenant_id;
+        $c = $this->contest($id, $tenantId);
+        if (!$c) {
+            return response()->json(['message' => 'Contest not found'], 404);
+        }
+        $items = DB::table('contest_submissions')->where('contest_id', $id)->orderBy('id')->get();
+        return response()->json(['data' => $items]);
     }
 
-    public function getSubmission(int $id, int $sid): JsonResponse
+    public function getSubmission(Request $request, $id, $sid): JsonResponse
     {
-        $contest = Contest::findOrFail($id);
-        $this->authorize('view', $contest);
-
-        $submission = ContestSubmission::where('contest_id', $id)
-            ->with(['participant', 'files', 'scores.juryUser', 'result'])
-            ->findOrFail($sid);
-
-        return response()->json($submission);
+        $tenantId = (int) auth()->user()->tenant_id;
+        $c = $this->contest($id, $tenantId);
+        if (!$c) {
+            return response()->json(['message' => 'Contest not found'], 404);
+        }
+        $row = DB::table('contest_submissions')
+            ->where('contest_id', $id)
+            ->where('id', $sid)
+            ->first();
+        if (!$row) {
+            return response()->json(['message' => 'Submission not found'], 404);
+        }
+        return response()->json(['data' => $row]);
     }
 
-    public function getScores(int $id, int $sid): JsonResponse
+    public function score(Request $request, $id, $sid): JsonResponse
     {
-        $contest = Contest::findOrFail($id);
-        $this->authorize('view', $contest);
-
-        $scores = ContestScore::where('contest_id', $id)
+        $v = Validator::make($request->all(), [
+            'rubric_json' => 'required|array',
+            'comment' => 'nullable|string|max:65535',
+        ]);
+        if ($v->fails()) {
+            return response()->json(['message' => 'Validation errors', 'errors' => $v->errors()], 422);
+        }
+        $tenantId = (int) auth()->user()->tenant_id;
+        $userId = (int) auth()->id();
+        $c = $this->contest($id, $tenantId);
+        if (!$c) {
+            return response()->json(['message' => 'Contest not found'], 404);
+        }
+        $sub = DB::table('contest_submissions')->where('contest_id', $id)->where('id', $sid)->first();
+        if (!$sub) {
+            return response()->json(['message' => 'Submission not found'], 404);
+        }
+        $jury = DB::table('contest_jury')->where('contest_id', $id)->where('user_id', $userId)->first();
+        if (!$jury) {
+            return response()->json(['message' => 'Not a jury member'], 403);
+        }
+        $rubric = $request->rubric_json;
+        $total = array_sum(array_map('floatval', $rubric));
+        $exists = DB::table('contest_scores')
             ->where('submission_id', $sid)
-            ->with('juryUser')
-            ->get();
-
-        return response()->json($scores);
+            ->where('jury_user_id', $userId)
+            ->exists();
+        $payload = [
+            'contest_id' => $id,
+            'rubric_json' => json_encode($rubric),
+            'total_score' => $total,
+            'comment' => $request->comment,
+            'updated_at' => now(),
+        ];
+        if ($exists) {
+            DB::table('contest_scores')
+                ->where('submission_id', $sid)
+                ->where('jury_user_id', $userId)
+                ->update($payload);
+        } else {
+            $payload['submission_id'] = $sid;
+            $payload['jury_user_id'] = $userId;
+            $payload['created_at'] = now();
+            DB::table('contest_scores')->insert($payload);
+        }
+        return response()->json(['message' => 'OK']);
     }
 
-    public function publishResults(int $id): JsonResponse
+    public function getScores(Request $request, $id, $sid): JsonResponse
     {
-        $contest = Contest::findOrFail($id);
-        $this->authorize('update', $contest);
+        $tenantId = (int) auth()->user()->tenant_id;
+        $c = $this->contest($id, $tenantId);
+        if (!$c) {
+            return response()->json(['message' => 'Contest not found'], 404);
+        }
+        $sub = DB::table('contest_submissions')->where('contest_id', $id)->where('id', $sid)->first();
+        if (!$sub) {
+            return response()->json(['message' => 'Submission not found'], 404);
+        }
+        $items = DB::table('contest_scores')->where('submission_id', $sid)->get();
+        return response()->json(['data' => $items]);
+    }
 
-        // First calculate results
-        $this->calculateResults($id);
-
-        // Then publish
-        ContestResult::where('contest_id', $id)
-            ->whereNull('published_at')
-            ->update(['published_at' => now()]);
-
-        // Notify participants
-        $results = ContestResult::where('contest_id', $id)
-            ->with('submission.participant')
-            ->get();
-
-        $timelineService = app(\App\Services\StudentTimelineService::class);
-        
-        foreach ($results as $result) {
-            if ($result->submission && $result->submission->participant) {
-                $studentId = $result->submission->participant->id;
-                
-                // Record timeline event
-                $timelineService->record('contest.result', $studentId, [
-                    'title' => "Результат конкурса: {$contest->title}",
-                    'description' => $result->place ? "Место: {$result->place}, Балл: {$result->final_score}" : "Балл: {$result->final_score}",
-                    'related_entity_type' => \App\Models\ContestResult::class,
-                    'related_entity_id' => $result->id,
-                    'payload' => [
-                        'contest_id' => $contest->id,
-                        'contest_title' => $contest->title,
-                        'final_score' => $result->final_score,
-                        'place' => $result->place,
-                    ],
-                    'event_date' => $result->published_at ?? now(),
+    public function publishResults(Request $request, $id): JsonResponse
+    {
+        $tenantId = (int) auth()->user()->tenant_id;
+        $c = $this->contest($id, $tenantId);
+        if (!$c) {
+            return response()->json(['message' => 'Contest not found'], 404);
+        }
+        $subs = DB::table('contest_submissions')->where('contest_id', $id)->pluck('id');
+        $scores = DB::table('contest_scores')->where('contest_id', $id)->get()->groupBy('submission_id');
+        $now = now();
+        $place = 0;
+        $ranked = [];
+        foreach ($subs as $sid) {
+            $juryScores = $scores->get($sid, collect());
+            $avg = $juryScores->isEmpty() ? 0 : $juryScores->avg('total_score');
+            $ranked[] = ['submission_id' => $sid, 'final_score' => round($avg, 2)];
+        }
+        usort($ranked, fn ($a, $b) => $b['final_score'] <=> $a['final_score']);
+        foreach ($ranked as $r) {
+            $place++;
+            $sid = $r['submission_id'];
+            $exists = DB::table('contest_results')->where('contest_id', $id)->where('submission_id', $sid)->exists();
+            if ($exists) {
+                DB::table('contest_results')->where('contest_id', $id)->where('submission_id', $sid)->update([
+                    'place' => $place,
+                    'final_score' => $r['final_score'],
+                    'published_at' => $now,
+                    'updated_at' => $now,
                 ]);
-                
-                $this->notificationService->create(
-                    $studentId,
-                    'contest.results_published',
-                    [
-                        'title' => 'Результаты конкурса опубликованы',
-                        'body' => "Конкурс '{$contest->title}': место {$result->place}, балл {$result->final_score}",
-                        'contest_id' => $id,
-                        'url' => "/contests/{$id}/results",
-                    ],
-                    'in_app'
-                );
+            } else {
+                DB::table('contest_results')->insert([
+                    'contest_id' => $id,
+                    'submission_id' => $sid,
+                    'place' => $place,
+                    'final_score' => $r['final_score'],
+                    'published_at' => $now,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ]);
             }
         }
-
-        WebhookController::trigger(EventTypes::CONTEST_RESULTS_PUBLISHED, [
-            'contest_id' => $id,
-        ]);
-
-        return response()->json(['message' => 'Results published']);
+        return response()->json(['message' => 'OK']);
     }
 
-    public function getResults(int $id): JsonResponse
+    public function getResults(Request $request, $id): JsonResponse
     {
-        $contest = Contest::findOrFail($id);
-        $this->authorize('view', $contest);
-
-        $results = ContestResult::where('contest_id', $id)
-            ->with(['submission.participant'])
-            ->orderBy('place')
-            ->get();
-
-        return response()->json($results);
-    }
-
-    public function generateCertificates(int $id): JsonResponse
-    {
-        $contest = Contest::findOrFail($id);
-        $this->authorize('update', $contest);
-
-        $results = ContestResult::where('contest_id', $id)
-            ->whereNotNull('published_at')
-            ->with(['submission.participant'])
-            ->get();
-
-        $template = \App\Models\DocTemplate::where('name', 'certificate_default')->first();
-        if (!$template) {
-            return response()->json(['message' => 'Certificate template not found'], 404);
+        $tenantId = (int) auth()->user()->tenant_id;
+        $c = $this->contest($id, $tenantId);
+        if (!$c) {
+            return response()->json(['message' => 'Contest not found'], 404);
         }
+        $items = DB::table('contest_results')->where('contest_id', $id)->orderBy('place')->get();
+        return response()->json(['data' => $items]);
+    }
+
+    public function generateCertificates(Request $request, $id): JsonResponse
+    {
+        $tenantId = (int) auth()->user()->tenant_id;
+        $c = $this->contest($id, $tenantId);
+        if (!$c) {
+            return response()->json(['message' => 'Contest not found'], 404);
+        }
+
+        $template = DB::table('doc_templates')
+            ->where('type', 'certificate')
+            ->when(Schema::hasColumn('doc_templates', 'tenant_id'), fn ($q) => $q->where(function ($q) use ($tenantId) {
+                $q->where('tenant_id', $tenantId)->orWhereNull('tenant_id');
+            }))
+            ->first();
+        if (!$template) {
+            $template = DB::table('doc_templates')->where('name', 'certificate_default')->first();
+        }
+        if (!$template) {
+            return response()->json(['message' => 'Certificate template not found. Create a doc_template with type "certificate" or name "certificate_default".'], 404);
+        }
+
+        $results = DB::table('contest_results as r')
+            ->join('contest_submissions as s', 's.id', '=', 'r.submission_id')
+            ->leftJoin('users as u', 'u.id', '=', 's.participant_user_id')
+            ->where('r.contest_id', $id)
+            ->whereNotNull('r.published_at')
+            ->orderBy('r.place')
+            ->select('r.id as result_id', 'r.submission_id', 'r.place', 'r.final_score', 's.participant_user_id', 'u.fio')
+            ->get();
 
         $certificates = [];
+        $today = now()->format('Y-m-d');
+        $userId = (int) auth()->id();
 
-        foreach ($results as $result) {
-            if (!$result->submission || !$result->submission->participant) {
-                continue;
-            }
+        foreach ($results as $r) {
+            $fio = $r->fio ?? 'Участник #' . $r->participant_user_id;
+            $num = 'CERT-' . $id . '-' . $r->submission_id . '-' . $r->result_id . '-' . substr(md5(uniqid((string) mt_rand(), true)), 0, 8);
+            $hash = hash('sha256', $num . '-' . now()->timestamp);
 
-            $participant = $result->submission->participant;
-
-            $document = \App\Models\Document::create([
-                'template_id' => $template->id,
+            $docId = DB::table('documents')->insertGetId([
                 'type' => 'certificate',
-                'number' => 'CERT-' . $contest->id . '-' . $result->submission_id . '-' . time(),
+                'number' => $num,
+                'date' => $today,
                 'status' => 'draft',
-                'data_json' => [
-                    'fio' => $participant->fio ?? $participant->name,
-                    'contest' => $contest->title,
-                    'place' => $result->place,
-                    'score' => $result->final_score,
+                'template_id' => $template->id,
+                'data_json' => json_encode([
+                    'fio' => $fio,
+                    'contest' => $c->title ?? 'Конкурс',
+                    'place' => $r->place,
+                    'score' => $r->final_score,
                     'date' => now()->format('d.m.Y'),
-                ],
-                'created_by' => auth()->id(),
-                'date' => now(),
-                'verify_hash' => hash('sha256', 'cert-' . $contest->id . '-' . $result->submission_id . '-' . time()),
+                ]),
+                'created_by' => $userId,
+                'verify_hash' => $hash,
+                'created_at' => now(),
+                'updated_at' => now(),
             ]);
-
             $certificates[] = [
-                'userId' => $participant->id,
-                'documentId' => $document->id,
+                'document_id' => (int) $docId,
+                'submission_id' => $r->submission_id,
+                'user_id' => $r->participant_user_id,
+                'place' => $r->place,
             ];
         }
 
-        return response()->json($certificates);
+        return response()->json([
+            'message' => count($certificates) ? 'Certificates created' : 'No results to certify',
+            'contest_id' => (int) $id,
+            'certificates' => $certificates,
+        ]);
     }
 
-    public function generateCertificate(int $id, int $resultId): JsonResponse
+    private function contest($id, int $tenantId): ?object
     {
-        $contest = Contest::findOrFail($id);
-        $result = ContestResult::where('contest_id', $id)->findOrFail($resultId);
-
-        // TODO: Generate PDF/DOCX certificate
-        // Use template and generate file, save to files table
-
-        return response()->json(['message' => 'Certificate generation not implemented']);
+        $q = DB::table('contests')->where('id', $id);
+        if (Schema::hasColumn('contests', 'tenant_id')) {
+            $q->where('tenant_id', $tenantId);
+        }
+        return $q->first();
     }
 }
-

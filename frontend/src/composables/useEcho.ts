@@ -1,6 +1,4 @@
-import { ref } from 'vue'
 import Echo from 'laravel-echo'
-import Pusher from 'pusher-js'
 
 let echoInstance: Echo | null = null
 
@@ -16,8 +14,13 @@ export function useEcho(): Echo | null {
     const pusherPort = import.meta.env.VITE_PUSHER_PORT || '6001'
     const pusherScheme = import.meta.env.VITE_PUSHER_SCHEME || 'http'
 
-    if (!pusherKey) {
-      console.warn('Pusher key not configured')
+    const isValidKey = pusherKey && 
+                       pusherKey !== 'local-key' && 
+                       pusherKey !== 'app-key' && 
+                       pusherKey.trim() !== ''
+    
+    if (!isValidKey) {
+      console.warn('Pusher key not configured, WebSocket disabled')
       return null
     }
 

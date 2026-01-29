@@ -5,199 +5,261 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Controller;
 use App\Models\Group;
 use App\Models\ScheduleItem;
-use App\Models\Subject;
-use App\Models\User;
-use Barryvdh\DomPDF\Facade\Pdf;
 use Carbon\Carbon;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Validator;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class PrintController extends Controller
 {
     /**
-     * Print schedule
-     * GET /api/print/schedule?view=group|teacher|room&id=...&from=&to=&format=pdf
+     * Print schedule (view: group|teacher|room, id, from-to).
      */
-    public function schedule(Request $request)
+    public function schedule(Request $request): StreamedResponse|JsonResponse
     {
-        $this->authorize('viewAny', ScheduleItem::class);
-
-        $validated = $request->validate([
-            'view' => ['required', 'in:group,teacher,room'],
-            'id' => ['required', 'integer'],
-            'from' => ['nullable', 'date'],
-            'to' => ['nullable', 'date'],
-            'format' => ['nullable', 'in:pdf', 'default:pdf'],
+        $v = Validator::make($request->all(), [
+            'view' => 'required|in:group,teacher,room',
+            'id' => 'required|integer|min:1',
+            'from' => 'nullable|date',
+            'to' => 'nullable|date|after_or_equal:from',
         ]);
-
-        $view = $validated['view'];
-        $id = $validated['id'];
-        $from = $validated['from'] ? Carbon::parse($validated['from']) : Carbon::now()->startOfWeek();
-        $to = $validated['to'] ? Carbon::parse($validated['to']) : Carbon::now()->endOfWeek();
-
-        $query = ScheduleItem::with(['group', 'subgroup', 'subject', 'teacher', 'room'])
-            ->whereBetween('date', [$from->format('Y-m-d'), $to->format('Y-m-d')])
-            ->orderBy('date')
-            ->orderBy('time_slot_id');
-
-        $title = '';
-        $entity = null;
-
-        switch ($view) {
-            case 'group':
-                $query->where('group_id', $id);
-                $entity = Group::findOrFail($id);
-                $title = "Расписание группы: {$entity->name}";
-                break;
-            case 'teacher':
-                $query->where('teacher_id', $id);
-                $entity = User::findOrFail($id);
-                $title = "Расписание преподавателя: {$entity->fio}";
-                break;
-            case 'room':
-                $query->where('room_id', $id);
-                $entity = \App\Models\Room::findOrFail($id);
-                $title = "Расписание кабинета: {$entity->name}";
-                break;
+        if ($v->fails()) {
+            return response()->json(['message' => 'Validation errors', 'errors' => $v->errors()], 422);
         }
 
-        $items = $query->get()->groupBy('date');
+        $tenantId = (int) auth()->user()->tenant_id;
+        $from = $request->from ? Carbon::parse($request->from) : Carbon::today();
+        $to = $request->to ? Carbon::parse($request->to) : Carbon::today()->addDays(6);
 
-        $tenant = app('tenant') ?? \App\Models\Tenant::first();
+        $q = ScheduleItem::query()
+            ->join('schedule_versions', 'schedule_items.version_id', '=', 'schedule_versions.id')
+            ->where('schedule_versions.tenant_id', $tenantId)
+            ->whereBetween('schedule_items.date', [$from->format('Y-m-d'), $to->format('Y-m-d')])
+            ->with(['group', 'subject', 'teacher', 'room', 'subgroup', 'timeSlot'])
+            ->select('schedule_items.*');
 
-        $data = [
-            'title' => $title,
-            'tenant' => $tenant,
-            'items' => $items,
+        if ($request->view === 'group') {
+            $q->where('schedule_items.group_id', $request->id);
+        } elseif ($request->view === 'teacher') {
+            $q->where('schedule_items.teacher_user_id', $request->id);
+        } else {
+            $q->where('schedule_items.room_id', $request->id);
+        }
+
+        $rows = $q->orderBy('schedule_items.date')->orderBy('schedule_items.time_slot_id')->get();
+        $items = $rows->groupBy(fn ($i) => $i->date->format('Y-m-d'));
+
+        $tenant = DB::table('tenants')->where('id', $tenantId)->first();
+        $tenantObj = (object) ['name' => $tenant->name ?? 'Учебное заведение'];
+
+        return $this->pdfResponse('print.schedule', [
+            'title' => 'Расписание',
+            'tenant' => $tenantObj,
+            'printed_at' => Carbon::now(),
             'from' => $from,
             'to' => $to,
-            'printed_at' => now(),
-        ];
-
-        $pdf = Pdf::loadView('print.schedule', $data);
-        return $pdf->download("schedule_{$view}_{$id}_{$from->format('Y-m-d')}.pdf");
+            'items' => $items,
+        ], 'schedule.pdf');
     }
 
     /**
-     * Print journal
-     * GET /api/print/journal?groupId=&subjectId=&termId=&format=pdf
+     * Print journal (groupId, optional subjectId, termId).
      */
-    public function journal(Request $request)
+    public function journal(Request $request): StreamedResponse|JsonResponse
     {
-        $this->authorize('viewAny', \App\Models\Grade::class);
-
-        $validated = $request->validate([
-            'groupId' => ['required', 'integer'],
-            'subjectId' => ['nullable', 'integer'],
-            'termId' => ['nullable', 'integer'],
-            'format' => ['nullable', 'in:pdf', 'default:pdf'],
+        $v = Validator::make($request->all(), [
+            'groupId' => 'required|exists:groups,id',
+            'subjectId' => 'nullable|exists:subjects,id',
+            'termId' => 'nullable|exists:terms,id',
+            'format' => 'nullable|in:pdf',
         ]);
-
-        $groupId = $validated['groupId'];
-        $subjectId = $validated['subjectId'] ?? null;
-        $termId = $validated['termId'] ?? null;
-
-        $group = Group::with(['members.user'])->findOrFail($groupId);
-        $subject = $subjectId ? Subject::findOrFail($subjectId) : null;
-
-        // Get lessons for this group/subject via schedule items
-        $scheduleItemsQuery = ScheduleItem::where('group_id', $groupId);
-        
-        if ($subjectId) {
-            $scheduleItemsQuery->where('subject_id', $subjectId);
+        if ($v->fails()) {
+            return response()->json(['message' => 'Validation errors', 'errors' => $v->errors()], 422);
         }
 
-        $scheduleItems = $scheduleItemsQuery->get();
-        $lessons = \App\Models\Lesson::whereIn('schedule_item_id', $scheduleItems->pluck('id'))
-            ->with(['scheduleItem.subject'])
-            ->orderBy('date')
+        $tenantId = (int) auth()->user()->tenant_id;
+        $group = Group::where('id', $request->groupId)->where('tenant_id', $tenantId)->first();
+        if (!$group) {
+            return response()->json(['message' => 'Group not found'], 404);
+        }
+
+        $subject = null;
+        if ($request->subjectId) {
+            $subject = DB::table('subjects')->where('id', $request->subjectId)->where('tenant_id', $tenantId)->first();
+            if ($subject) {
+                $subject = (object) ['name' => $subject->name];
+            }
+        }
+
+        $term = null;
+        if ($request->termId) {
+            $term = DB::table('terms')->where('id', $request->termId)->first();
+            if ($term) {
+                $term = (object) ['name' => $term->name ?? ''];
+            }
+        }
+
+        $versionQ = DB::table('schedule_versions')->where('tenant_id', $tenantId);
+        if ($request->termId) {
+            $versionQ->where('term_id', $request->termId);
+        }
+        $version = $versionQ->orderByDesc('id')->first();
+        $versionId = $version->id ?? null;
+
+        if (!$versionId) {
+            return response()->json(['message' => 'No schedule version found for term'], 422);
+        }
+
+        $lessons = DB::table('lessons')
+            ->join('schedule_items', 'lessons.schedule_item_id', '=', 'schedule_items.id')
+            ->where('schedule_items.version_id', $versionId)
+            ->where('schedule_items.group_id', $request->groupId)
+            ->where('lessons.tenant_id', $tenantId);
+        if ($request->subjectId) {
+            $lessons->where('schedule_items.subject_id', $request->subjectId);
+        }
+        $lessons = $lessons->orderBy('lessons.date')->orderBy('schedule_items.time_slot_id')
+            ->select('lessons.*', 'schedule_items.subject_id')
+            ->limit(50)
             ->get();
 
-        // Get students
-        $students = $group->members()
-            ->with('user')
-            ->get()
-            ->map(fn($m) => $m->user)
-            ->filter(fn($u) => $u && $u->roles()->where('name', 'student')->exists())
-            ->sortBy('fio')
-            ->values();
+        $lessonIds = $lessons->pluck('id')->toArray();
+        $students = DB::table('group_members')
+            ->join('users', 'group_members.user_id', '=', 'users.id')
+            ->where('group_members.group_id', $request->groupId)
+            ->where('group_members.role_in_group', 'student')
+            ->where('users.tenant_id', $tenantId)
+            ->select('users.id', 'users.fio')
+            ->orderBy('users.fio')
+            ->get();
 
-        // Get grades for each student
-        $grades = \App\Models\Grade::whereIn('lesson_id', $lessons->pluck('id'))
-            ->with(['lesson', 'assignment'])
-            ->get()
-            ->groupBy(['student_id', 'lesson_id']);
+        $gradesRaw = [];
+        if (!empty($lessonIds)) {
+            $g = DB::table('grades')->whereIn('lesson_id', $lessonIds)->get();
+            foreach ($g as $gr) {
+                $gradesRaw[$gr->student_user_id][$gr->lesson_id][] = (object) ['value' => $gr->value, 'assignment' => null];
+            }
+        }
+        $grades = collect($gradesRaw)->map(fn ($byLesson) => collect($byLesson)->map(fn ($arr) => collect($arr)));
 
-        $tenant = app('tenant') ?? \App\Models\Tenant::first();
+        $lessonsWithSubject = $lessons->map(function ($l) use ($tenantId) {
+            $s = DB::table('subjects')->where('id', $l->subject_id)->first();
+            $si = (object) ['subject' => $s ? (object) ['name' => $s->name] : (object) ['name' => '-']];
+            $l->scheduleItem = $si;
+            return $l;
+        });
 
-        $data = [
-            'title' => $subject ? "Журнал: {$subject->name}" : "Журнал группы: {$group->name}",
-            'tenant' => $tenant,
+        $tenantRow = DB::table('tenants')->where('id', $tenantId)->first();
+        $tenantObj = (object) ['name' => $tenantRow->name ?? 'Учебное заведение'];
+
+        return $this->pdfResponse('print.journal', [
+            'title' => 'Журнал',
+            'tenant' => $tenantObj,
+            'printed_at' => Carbon::now(),
             'group' => $group,
             'subject' => $subject,
+            'term' => $term,
+            'lessons' => $lessonsWithSubject,
             'students' => $students,
-            'lessons' => $lessons,
             'grades' => $grades,
-            'printed_at' => now(),
-        ];
-
-        $pdf = Pdf::loadView('print.journal', $data);
-        return $pdf->download("journal_group_{$groupId}" . ($subjectId ? "_subject_{$subjectId}" : '') . ".pdf");
+        ], 'journal.pdf');
     }
 
     /**
-     * Print attendance
-     * GET /api/print/attendance?groupId=&from=&to=&format=pdf
+     * Print attendance (groupId, from-to).
      */
-    public function attendance(Request $request)
+    public function attendance(Request $request): StreamedResponse|JsonResponse
     {
-        $this->authorize('viewAny', \App\Models\Attendance::class);
-
-        $validated = $request->validate([
-            'groupId' => ['required', 'integer'],
-            'from' => ['nullable', 'date'],
-            'to' => ['nullable', 'date'],
-            'format' => ['nullable', 'in:pdf', 'default:pdf'],
+        $v = Validator::make($request->all(), [
+            'groupId' => 'required|exists:groups,id',
+            'from' => 'nullable|date',
+            'to' => 'nullable|date|after_or_equal:from',
+            'format' => 'nullable|in:pdf',
         ]);
+        if ($v->fails()) {
+            return response()->json(['message' => 'Validation errors', 'errors' => $v->errors()], 422);
+        }
 
-        $groupId = $validated['groupId'];
-        $from = $validated['from'] ? Carbon::parse($validated['from']) : Carbon::now()->startOfMonth();
-        $to = $validated['to'] ? Carbon::parse($validated['to']) : Carbon::now()->endOfMonth();
+        $tenantId = (int) auth()->user()->tenant_id;
+        $group = Group::where('id', $request->groupId)->where('tenant_id', $tenantId)->first();
+        if (!$group) {
+            return response()->json(['message' => 'Group not found'], 404);
+        }
 
-        $group = Group::with(['members.user'])->findOrFail($groupId);
+        $from = $request->from ? Carbon::parse($request->from) : Carbon::today();
+        $to = $request->to ? Carbon::parse($request->to) : $from->copy()->addDays(13);
 
-        // Get students
-        $students = $group->members()
-            ->with('user')
-            ->get()
-            ->map(fn($m) => $m->user)
-            ->filter(fn($u) => $u && $u->roles()->where('name', 'student')->exists())
-            ->sortBy('fio')
-            ->values();
+        $students = DB::table('group_members')
+            ->join('users', 'group_members.user_id', '=', 'users.id')
+            ->where('group_members.group_id', $request->groupId)
+            ->where('group_members.role_in_group', 'student')
+            ->where('users.tenant_id', $tenantId)
+            ->select('users.id', 'users.fio')
+            ->orderBy('users.fio')
+            ->get();
 
-        // Get attendance records
-        $attendanceQuery = DB::table('attendance')
-            ->where('group_id', $groupId)
-            ->whereBetween('date', [$from->format('Y-m-d'), $to->format('Y-m-d')]);
-        
-        $attendanceRecords = $attendanceQuery->get();
-        $attendance = $attendanceRecords->groupBy(['student_id', 'date']);
+        $dates = [];
+        $c = $from->copy();
+        while ($c->lte($to)) {
+            $dates[] = $c->format('Y-m-d');
+            $c->addDay();
+        }
 
-        $tenant = app('tenant') ?? \App\Models\Tenant::first();
+        $lessonIds = DB::table('lessons')
+            ->join('schedule_items', 'lessons.schedule_item_id', '=', 'schedule_items.id')
+            ->where('schedule_items.group_id', $request->groupId)
+            ->whereBetween('lessons.date', [$from->format('Y-m-d'), $to->format('Y-m-d')])
+            ->where('lessons.tenant_id', $tenantId)
+            ->pluck('lessons.id');
 
-        $data = [
-            'title' => "Посещаемость группы: {$group->name}",
-            'tenant' => $tenant,
+        $attendance = collect();
+        if ($lessonIds->isNotEmpty()) {
+            $rows = DB::table('attendance')->whereIn('lesson_id', $lessonIds)->get();
+            $lessonsById = DB::table('lessons')->whereIn('id', $lessonIds)->get()->keyBy('id');
+            $tmp = [];
+            foreach ($rows as $r) {
+                $date = $lessonsById->get($r->lesson_id)?->date ?? null;
+                if ($date) {
+                    $tmp[$r->student_user_id][$date][] = (object) ['status' => $r->status];
+                }
+            }
+            foreach ($tmp as $sid => $byDate) {
+                $attendance[$sid] = collect($byDate)->map(fn ($arr) => collect($arr));
+            }
+            $attendance = collect($attendance);
+        }
+
+        $tenantRow = DB::table('tenants')->where('id', $tenantId)->first();
+        $tenantObj = (object) ['name' => $tenantRow->name ?? 'Учебное заведение'];
+
+        return $this->pdfResponse('print.attendance', [
+            'title' => 'Посещаемость',
+            'tenant' => $tenantObj,
+            'printed_at' => Carbon::now(),
             'group' => $group,
-            'students' => $students,
-            'attendance' => $attendance,
             'from' => $from,
             'to' => $to,
-            'printed_at' => now(),
-        ];
+            'dates' => $dates,
+            'students' => $students,
+            'attendance' => $attendance,
+        ], 'attendance.pdf');
+    }
 
-        $pdf = Pdf::loadView('print.attendance', $data);
-        return $pdf->download("attendance_group_{$groupId}_{$from->format('Y-m-d')}.pdf");
+    /**
+     * @param  array<string, mixed>  $data
+     */
+    private function pdfResponse(string $view, array $data, string $filename): StreamedResponse|JsonResponse
+    {
+        try {
+            $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView($view, $data);
+            return $pdf->stream($filename, ['Attachment' => true]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'message' => 'PDF generation failed. Install barryvdh/laravel-dompdf: composer require barryvdh/laravel-dompdf',
+                'error' => $e->getMessage(),
+            ], 501);
+        }
     }
 }
-

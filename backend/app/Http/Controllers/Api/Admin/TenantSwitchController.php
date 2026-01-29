@@ -3,51 +3,38 @@
 namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
-use App\Models\Tenant;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 class TenantSwitchController extends Controller
 {
-    public function switch(Request $request, int $id): JsonResponse
+    public function switch(Request $request, $id): JsonResponse
     {
-        $user = auth()->user();
-        
-        if (!$user) {
-            return response()->json(['message' => 'Unauthenticated'], 401);
+        $userId = (int) auth()->id();
+        $tenantId = (int) $id;
+
+        $tenant = DB::table('tenants')->where('id', $tenantId)->first();
+        if (!$tenant) {
+            return response()->json(['message' => 'Tenant not found'], 404);
         }
 
-        // Only admins or tenant members can switch
-        $tenant = Tenant::findOrFail($id);
-        
-        $isMember = \App\Models\TenantMember::where('tenant_id', $tenant->id)
-            ->where('user_id', $user->id)
-            ->exists();
-
-        if (!$isMember && !$user->hasRole('admin')) {
-            return response()->json(['message' => 'You are not a member of this tenant'], 403);
+        $allowed = (int) auth()->user()->tenant_id === $tenantId;
+        if (!$allowed && Schema::hasTable('tenant_members')) {
+            $allowed = DB::table('tenant_members')
+                ->where('tenant_id', $tenantId)
+                ->where('user_id', $userId)
+                ->exists();
         }
-
-        // Update context for this request
-        app()->instance('tenant', $tenant);
-        app()->instance('tenant_id', $tenant->id);
-
-        // Generate new JWT token with updated tenant_id
-        $accessToken = \Tymon\JWTAuth\Facades\JWTAuth::fromUser($user);
+        if (!$allowed) {
+            return response()->json(['message' => 'Access denied to tenant'], 403);
+        }
 
         return response()->json([
-            'message' => 'Tenant switched',
-            'access_token' => $accessToken,
-            'token_type' => 'bearer',
-            'expires_in' => config('jwt.ttl') * 60,
-            'tenant' => [
-                'id' => $tenant->id,
-                'name' => $tenant->name,
-                'slug' => $tenant->slug,
-                'timezone' => $tenant->timezone,
-            ],
+            'message' => 'OK',
+            'tenant_id' => $tenantId,
+            'tenant_name' => $tenant->name ?? null,
         ]);
     }
 }
-
-

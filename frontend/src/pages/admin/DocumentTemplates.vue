@@ -83,8 +83,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
-import { documentsApi, type DocTemplateDTO } from '../../api/documents'
+import { ref, onMounted } from 'vue'
+import type { DocTemplateDTO } from '../../api/documents'
 
 const loading = ref(false)
 const saving = ref(false)
@@ -186,10 +186,6 @@ const deleteTemplate = async (id: number) => {
     console.error('Failed to delete template:', error)
     alert('Ошибка при удалении')
   }
-}
-
-const onPageChange = (page: number) => {
-  // TODO: implement pagination
 }
 
 onMounted(() => {

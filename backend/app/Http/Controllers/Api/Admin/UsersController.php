@@ -3,98 +3,292 @@
 namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
-use App\Http\Requests\Admin\AssignRolesRequest;
-use App\Http\Requests\Admin\StoreUserRequest;
-use App\Http\Requests\Admin\UpdateUserRequest;
 use App\Models\User;
+use App\Models\Role;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\DB;
 
 class UsersController extends Controller
 {
+    /**
+     * List all users with pagination and filters
+     */
     public function index(Request $request): JsonResponse
     {
-        $query = User::query()->with('roles');
+        $query = User::query();
 
-        // TODO: Implement role filter: ?role=curator
-        // if ($role = $request->query('role')) {
-        //     $query->whereHas('roles', function ($q) use ($role): void {
-        //         $q->where('name', 'ilike', "%{$role}%");
-        //     });
-        // }
+        // Filter by tenant if specified
+        if ($request->has('tenant_id')) {
+            $query->where('tenant_id', $request->tenant_id);
+        }
 
-        if ($search = $request->query('q')) {
-            $query->where(function ($q) use ($search): void {
+        // Filter by status
+        if ($request->has('status')) {
+            $query->where('status', $request->status);
+        }
+
+        // Search by fio, email, or phone
+        if ($request->has('search')) {
+            $search = $request->search;
+            $query->where(function ($q) use ($search) {
                 $q->where('fio', 'ilike', "%{$search}%")
-                    ->orWhere('email', 'ilike', "%{$search}%")
-                    ->orWhere('phone', 'ilike', "%{$search}%");
+                  ->orWhere('email', 'ilike', "%{$search}%")
+                  ->orWhere('phone', 'ilike', "%{$search}%");
             });
         }
 
-        $users = $query->orderBy('created_at', 'desc')->paginate($request->integer('per_page', 50));
+        // Eager load relationships
+        $query->with(['roles', 'tenants']);
 
-        return response()->json($users);
+        // Pagination
+        $perPage = $request->get('per_page', 15);
+        $users = $query->paginate($perPage);
+
+        return response()->json([
+            'data' => $users->items(),
+            'pagination' => [
+                'current_page' => $users->currentPage(),
+                'last_page' => $users->lastPage(),
+                'per_page' => $users->perPage(),
+                'total' => $users->total(),
+            ]
+        ]);
     }
 
-    public function store(StoreUserRequest $request): JsonResponse
+    /**
+     * Create a new user
+     */
+    public function store(Request $request): JsonResponse
     {
-        $validated = $request->validated();
-        $validated['password_hash'] = Hash::make($validated['password']);
-        unset($validated['password']);
+        $validator = Validator::make($request->all(), [
+            'fio' => 'required|string|max:255',
+            'email' => 'nullable|email|unique:users,email',
+            'phone' => 'nullable|string|unique:users,phone',
+            'password' => 'required|string|min:8',
+            'status' => 'nullable|in:active,blocked',
+            'tenant_id' => 'nullable|exists:tenants,id',
+            'role_ids' => 'nullable|array',
+            'role_ids.*' => 'exists:roles,id',
+        ]);
 
-        $user = User::create($validated);
-
-        if ($roleIds = $request->input('role_ids')) {
-            $user->roles()->sync($roleIds);
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation errors',
+                'errors' => $validator->errors()
+            ], 422);
         }
 
-        return response()->json($user->load('roles'), Response::HTTP_CREATED);
+        try {
+            DB::beginTransaction();
+
+            $user = User::create([
+                'fio' => $request->fio,
+                'email' => $request->email,
+                'phone' => $request->phone,
+                'password_hash' => Hash::make($request->password),
+                'status' => $request->status ?? 'active',
+                'tenant_id' => $request->tenant_id ?? auth()->user()->tenant_id,
+            ]);
+
+            // Assign roles if provided
+            if ($request->has('role_ids') && is_array($request->role_ids)) {
+                $user->roles()->sync($request->role_ids);
+            }
+
+            DB::commit();
+
+            $user->load(['roles', 'tenants']);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'User created successfully',
+                'data' => $user
+            ], 201);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to create user: ' . $e->getMessage()
+            ], 500);
+        }
     }
 
-    public function show(int $id): JsonResponse
+    /**
+     * Show a specific user
+     */
+    public function show(Request $request, $id): JsonResponse
     {
-        $user = User::with('roles')->findOrFail($id);
+        $user = User::with(['roles', 'permissions', 'tenants'])->find($id);
 
-        return response()->json($user);
-    }
-
-    public function update(UpdateUserRequest $request, int $id): JsonResponse
-    {
-        $user = User::findOrFail($id);
-        $validated = $request->validated();
-
-        if (isset($validated['password']) && !empty($validated['password'])) {
-            $validated['password_hash'] = Hash::make($validated['password']);
-            unset($validated['password']);
+        if (!$user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'User not found'
+            ], 404);
         }
 
-        $user->fill($validated);
-        $user->save();
+        return response()->json([
+            'data' => $user
+        ]);
+    }
 
-        // Sync roles if provided
-        if ($roleIds = $request->input('role_ids')) {
-            $user->roles()->sync($roleIds);
+    /**
+     * Update a user
+     */
+    public function update(Request $request, $id): JsonResponse
+    {
+        $user = User::find($id);
+
+        if (!$user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'User not found'
+            ], 404);
         }
 
-        return response()->json($user->load('roles'));
+        $validator = Validator::make($request->all(), [
+            'fio' => 'sometimes|string|max:255',
+            'email' => 'sometimes|email|unique:users,email,' . $id,
+            'phone' => 'sometimes|string|unique:users,phone,' . $id,
+            'password' => 'sometimes|string|min:8',
+            'status' => 'sometimes|in:active,blocked',
+            'tenant_id' => 'sometimes|exists:tenants,id',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation errors',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            DB::beginTransaction();
+
+            $updateData = [];
+            
+            if ($request->has('fio')) {
+                $updateData['fio'] = $request->fio;
+            }
+            if ($request->has('email')) {
+                $updateData['email'] = $request->email;
+            }
+            if ($request->has('phone')) {
+                $updateData['phone'] = $request->phone;
+            }
+            if ($request->has('password')) {
+                $updateData['password_hash'] = Hash::make($request->password);
+            }
+            if ($request->has('status')) {
+                $updateData['status'] = $request->status;
+            }
+            if ($request->has('tenant_id')) {
+                $updateData['tenant_id'] = $request->tenant_id;
+            }
+
+            $user->update($updateData);
+
+            DB::commit();
+
+            $user->load(['roles', 'tenants']);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'User updated successfully',
+                'data' => $user
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to update user: ' . $e->getMessage()
+            ], 500);
+        }
     }
 
-    public function destroy(int $id): JsonResponse
+    /**
+     * Delete a user
+     */
+    public function destroy(Request $request, $id): JsonResponse
     {
-        $user = User::findOrFail($id);
-        $user->delete();
+        $user = User::find($id);
 
-        return response()->json(null, Response::HTTP_NO_CONTENT);
+        if (!$user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'User not found'
+            ], 404);
+        }
+
+        // Prevent deleting yourself
+        if ($user->id === auth()->id()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'You cannot delete your own account'
+            ], 403);
+        }
+
+        try {
+            $user->delete();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'User deleted successfully'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to delete user: ' . $e->getMessage()
+            ], 500);
+        }
     }
 
-    public function assignRoles(AssignRolesRequest $request, int $id): JsonResponse
+    /**
+     * Assign roles to a user
+     */
+    public function assignRoles(Request $request, $id): JsonResponse
     {
-        $user = User::findOrFail($id);
-        $user->roles()->sync($request->input('role_ids'));
+        $user = User::find($id);
 
-        return response()->json($user->load('roles'));
+        if (!$user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'User not found'
+            ], 404);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'role_ids' => 'required|array',
+            'role_ids.*' => 'exists:roles,id',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation errors',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            $user->roles()->sync($request->role_ids);
+            $user->load('roles');
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Roles assigned successfully',
+                'data' => $user
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to assign roles: ' . $e->getMessage()
+            ], 500);
+        }
     }
 }
-

@@ -3,61 +3,69 @@
 namespace App\Http\Controllers\Api\Admin\Directory;
 
 use App\Http\Controllers\Controller;
-use App\Http\Requests\Admin\Directory\StoreSubjectRequest;
-use App\Http\Requests\Admin\Directory\UpdateSubjectRequest;
 use App\Models\Subject;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Http\Response;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\Auth;
 
 class SubjectsController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
-        $query = Subject::query();
+        $tenantId = Auth::user()->tenant_id;
+        $subjects = Subject::forTenant($tenantId)->get();
+        return response()->json(['data' => $subjects]);
+    }
 
-        if ($search = $request->query('q')) {
-            $query->where(function ($q) use ($search): void {
-                $q->where('name', 'ilike', "%{$search}%")
-                    ->orWhere('code', 'ilike', "%{$search}%");
-            });
+    public function store(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'name' => 'required|string|max:255',
+            'code' => 'required|string|max:50|unique:subjects,code',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['errors' => $validator->errors()], 422);
         }
 
-        $subjects = $query->orderBy('name')->paginate($request->integer('per_page', 50));
+        $subject = Subject::create([
+            'name' => $request->name,
+            'code' => $request->code,
+            'tenant_id' => Auth::user()->tenant_id,
+        ]);
 
-        return response()->json($subjects);
+        return response()->json(['data' => $subject], 201);
     }
 
-    public function store(StoreSubjectRequest $request): JsonResponse
+    public function show(Request $request, $id): JsonResponse
     {
-        $subject = Subject::create($request->validated());
-
-        return response()->json($subject, Response::HTTP_CREATED);
+        $tenantId = Auth::user()->tenant_id;
+        $subject = Subject::forTenant($tenantId)->findOrFail($id);
+        return response()->json(['data' => $subject]);
     }
 
-    public function show(int $id): JsonResponse
+    public function update(Request $request, $id): JsonResponse
     {
-        $subject = Subject::findOrFail($id);
+        $subject = Subject::forTenant(Auth::user()->tenant_id)->findOrFail($id);
+        
+        $validator = Validator::make($request->all(), [
+            'name' => 'sometimes|string|max:255',
+            'code' => 'sometimes|string|max:50|unique:subjects,code,' . $id,
+        ]);
 
-        return response()->json($subject);
+        if ($validator->fails()) {
+            return response()->json(['errors' => $validator->errors()], 422);
+        }
+
+        $subject->update($request->only(['name', 'code']));
+        return response()->json(['data' => $subject]);
     }
 
-    public function update(UpdateSubjectRequest $request, int $id): JsonResponse
+    public function destroy(Request $request, $id): JsonResponse
     {
-        $subject = Subject::findOrFail($id);
-        $subject->fill($request->validated());
-        $subject->save();
-
-        return response()->json($subject);
-    }
-
-    public function destroy(int $id): JsonResponse
-    {
-        $subject = Subject::findOrFail($id);
+        $subject = Subject::forTenant(Auth::user()->tenant_id)->findOrFail($id);
         $subject->delete();
-
-        return response()->json(null, Response::HTTP_NO_CONTENT);
+        return response()->json(['message' => 'Subject deleted successfully']);
     }
 }
-
-

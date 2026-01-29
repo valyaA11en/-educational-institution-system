@@ -7,14 +7,25 @@
             <h1>История обучения</h1>
             <p v-if="student" class="text-subtitle-1">{{ student.fio }}</p>
           </div>
-          <v-btn
-            color="primary"
-            :loading="exporting"
-            @click="exportPDF"
-            prepend-icon="mdi-file-pdf-box"
-          >
-            Экспорт PDF
-          </v-btn>
+          <div class="d-flex" style="gap: 8px;">
+            <v-btn
+              color="primary"
+              :loading="exporting"
+              @click="exportPDF"
+              prepend-icon="mdi-file-pdf-box"
+            >
+              Экспорт истории
+            </v-btn>
+            <v-btn
+              color="primary"
+              variant="outlined"
+              :loading="exportingAll"
+              @click="exportAll"
+              prepend-icon="mdi-file-document-multiple"
+            >
+              Экспорт всего
+            </v-btn>
+          </div>
         </div>
       </v-col>
     </v-row>
@@ -131,6 +142,7 @@ const timeline = ref<TimelineEvent[]>([])
 const student = ref<any>(null)
 const loading = ref(false)
 const exporting = ref(false)
+const exportingAll = ref(false)
 
 const filters = ref({
   event_type: [] as string[],
@@ -253,6 +265,17 @@ async function exportPDF() {
     console.error('Failed to export PDF:', error)
   } finally {
     exporting.value = false
+  }
+}
+
+async function exportAll() {
+  exportingAll.value = true
+  try {
+    await studentExportApi.exportStudent(studentId.value)
+  } catch (error) {
+    console.error('Failed to export all:', error)
+  } finally {
+    exportingAll.value = false
   }
 }
 </script>

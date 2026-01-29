@@ -3,135 +3,172 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
-use App\Http\Requests\Rules\StoreRuleRequest;
-use App\Http\Requests\Rules\UpdateRuleRequest;
 use App\Models\Rule;
-use App\Services\Rule\RuleEngine;
+use App\Services\RuleEngineService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\Auth;
 
 class RuleController extends Controller
 {
-    public function __construct(
-        private RuleEngine $ruleEngine
-    ) {
+    protected RuleEngineService $ruleEngine;
+
+    public function __construct(RuleEngineService $ruleEngine)
+    {
+        $this->ruleEngine = $ruleEngine;
     }
 
     public function index(Request $request): JsonResponse
     {
         $query = Rule::with('creator');
 
-        if ($scope = $request->query('scope')) {
-            $query->where('scope', $scope);
+        if ($request->has('scope')) {
+            $query->forScope($request->scope);
         }
-
         if ($request->has('enabled')) {
-            $query->where('enabled', $request->boolean('enabled'));
+            $query->where('enabled', $request->enabled);
         }
 
-        $rules = $query->orderBy('created_at', 'desc')
-            ->paginate($request->integer('per_page', 50));
-
-        return response()->json($rules);
+        $rules = $query->orderBy('created_at', 'desc')->get();
+        return response()->json(['data' => $rules]);
     }
 
-    public function store(StoreRuleRequest $request): JsonResponse
+    public function store(Request $request): JsonResponse
     {
-        $validated = $request->validated();
-
-        $rule = Rule::create([
-            'name' => $validated['name'],
-            'enabled' => $validated['enabled'] ?? true,
-            'scope' => $validated['scope'],
-            'conditions_json' => $validated['conditions_json'],
-            'actions_json' => $validated['actions_json'],
-            'created_by' => auth()->id(),
+        $validator = Validator::make($request->all(), [
+            'name' => 'required|string|max:255',
+            'scope' => 'required|in:global,org,term',
+            'conditions_json' => 'required|array',
+            'actions_json' => 'required|array',
+            'enabled' => 'sometimes|boolean',
         ]);
 
-        return response()->json($rule->load('creator'), 201);
+        if ($validator->fails()) {
+            return response()->json(['errors' => $validator->errors()], 422);
+        }
+
+        // Validate conditions and actions
+        $conditionsValidation = $this->ruleEngine->validateRuleConditions($request->conditions_json);
+        $actionsValidation = $this->ruleEngine->validateRuleActions($request->actions_json);
+
+        if (!$conditionsValidation['valid']) {
+            return response()->json(['errors' => ['conditions' => $conditionsValidation['errors']]], 422);
+        }
+
+        if (!$actionsValidation['valid']) {
+            return response()->json(['errors' => ['actions' => $actionsValidation['errors']]], 422);
+        }
+
+        $rule = Rule::create([
+            'name' => $request->name,
+            'scope' => $request->scope,
+            'conditions_json' => $request->conditions_json,
+            'actions_json' => $request->actions_json,
+            'enabled' => $request->enabled ?? true,
+            'created_by' => Auth::id(),
+        ]);
+
+        return response()->json(['data' => $rule->load('creator')], 201);
     }
 
-    public function show(int $id): JsonResponse
+    public function validate(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'conditions' => 'required|array',
+            'actions' => 'required|array',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['errors' => $validator->errors()], 422);
+        }
+
+        $conditionsValidation = $this->ruleEngine->validateRuleConditions($request->conditions);
+        $actionsValidation = $this->ruleEngine->validateRuleActions($request->actions);
+
+        return response()->json([
+            'valid' => $conditionsValidation['valid'] && $actionsValidation['valid'],
+            'conditions' => $conditionsValidation,
+            'actions' => $actionsValidation,
+        ]);
+    }
+
+    public function show(Request $request, $id): JsonResponse
     {
         $rule = Rule::with('creator')->findOrFail($id);
-        return response()->json($rule);
+        return response()->json(['data' => $rule]);
     }
 
-    public function update(UpdateRuleRequest $request, int $id): JsonResponse
+    public function update(Request $request, $id): JsonResponse
     {
         $rule = Rule::findOrFail($id);
-        $validated = $request->validated();
+        
+        $validator = Validator::make($request->all(), [
+            'name' => 'sometimes|string|max:255',
+            'scope' => 'sometimes|in:global,org,term',
+            'conditions_json' => 'sometimes|array',
+            'actions_json' => 'sometimes|array',
+            'enabled' => 'sometimes|boolean',
+        ]);
 
-        $rule->update($validated);
+        if ($validator->fails()) {
+            return response()->json(['errors' => $validator->errors()], 422);
+        }
 
-        return response()->json($rule->load('creator'));
+        // Validate conditions and actions if provided
+        if ($request->has('conditions_json')) {
+            $conditionsValidation = $this->ruleEngine->validateRuleConditions($request->conditions_json);
+            if (!$conditionsValidation['valid']) {
+                return response()->json(['errors' => ['conditions' => $conditionsValidation['errors']]], 422);
+            }
+        }
+
+        if ($request->has('actions_json')) {
+            $actionsValidation = $this->ruleEngine->validateRuleActions($request->actions_json);
+            if (!$actionsValidation['valid']) {
+                return response()->json(['errors' => ['actions' => $actionsValidation['errors']]], 422);
+            }
+        }
+
+        $rule->update($request->only(['name', 'scope', 'conditions_json', 'actions_json', 'enabled']));
+        return response()->json(['data' => $rule->load('creator')]);
     }
 
-    public function destroy(int $id): JsonResponse
+    public function destroy(Request $request, $id): JsonResponse
     {
         $rule = Rule::findOrFail($id);
         $rule->delete();
-
-        return response()->json(['message' => 'Rule deleted']);
+        return response()->json(['message' => 'Rule deleted successfully']);
     }
 
-    public function toggle(int $id): JsonResponse
+    public function toggle(Request $request, $id): JsonResponse
     {
         $rule = Rule::findOrFail($id);
-        $rule->update(['enabled' => !$rule->enabled]);
-
-        return response()->json($rule);
+        $rule->enabled = !$rule->enabled;
+        $rule->save();
+        return response()->json(['data' => $rule]);
     }
 
-    /**
-     * Validate rule conditions and actions
-     */
-    public function validate(Request $request): JsonResponse
+    public function test(Request $request, $id): JsonResponse
     {
-        $request->validate([
-            'conditions_json' => ['required', 'array'],
-            'actions_json' => ['required', 'array'],
+        $rule = Rule::findOrFail($id);
+        
+        $validator = Validator::make($request->all(), [
+            'context' => 'required|array',
         ]);
 
-        $errors = $this->ruleEngine->validateRule(
-            $request->input('conditions_json'),
-            $request->input('actions_json')
-        );
-
-        if (empty($errors)) {
-            return response()->json(['valid' => true, 'message' => 'Rule is valid']);
+        if ($validator->fails()) {
+            return response()->json(['errors' => $validator->errors()], 422);
         }
 
-        return response()->json([
-            'valid' => false,
-            'errors' => $errors,
-        ], 422);
-    }
-
-    /**
-     * Test rule execution with sample context
-     */
-    public function test(Request $request, int $id): JsonResponse
-    {
-        $rule = Rule::findOrFail($id);
-        $context = $request->input('context', []);
-
-        // Create a mock event for testing
-        $mockEvent = new \App\Models\OutboxEvent([
-            'event_type' => $request->input('event_type', 'test.event'),
-            'actor_user_id' => auth()->id(),
-            'entity_type' => $context['entity_type'] ?? null,
-            'entity_id' => $context['entity_id'] ?? null,
-            'payload_json' => $context['payload'] ?? [],
-        ]);
-
-        $matches = $this->ruleEngine->matchesConditions($rule, $mockEvent);
-
+        $context = $request->context;
+        $conditionsMet = $this->ruleEngine->validateConditions($rule->conditions_json ?? [], $context);
+        
         return response()->json([
             'rule_id' => $rule->id,
-            'matches' => $matches,
-            'conditions' => $rule->conditions_json,
-            'actions' => $rule->actions_json,
+            'conditions_met' => $conditionsMet,
+            'would_execute' => $conditionsMet,
+            'actions' => $conditionsMet ? ($rule->actions_json ?? []) : [],
         ]);
     }
 }

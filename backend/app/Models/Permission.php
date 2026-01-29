@@ -2,22 +2,34 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 class Permission extends Model
 {
-    use HasFactory;
-
     protected $fillable = [
         'code',
         'description',
     ];
 
-    public function roles()
+    protected $casts = [
+        'created_at' => 'datetime',
+        'updated_at' => 'datetime',
+    ];
+
+    /**
+     * Get the roles that have this permission.
+     */
+    public function roles(): BelongsToMany
     {
         return $this->belongsToMany(Role::class, 'role_permissions');
     }
+
+    /**
+     * Get the users that have this permission directly.
+     */
+    public function users(): BelongsToMany
+    {
+        return $this->belongsToMany(User::class, 'object_permissions');
+    }
 }
-
-

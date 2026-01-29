@@ -3,61 +3,69 @@
 namespace App\Http\Controllers\Api\Admin\Directory;
 
 use App\Http\Controllers\Controller;
-use App\Http\Requests\Admin\Directory\StoreGroupRequest;
-use App\Http\Requests\Admin\Directory\UpdateGroupRequest;
 use App\Models\Group;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Http\Response;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\Auth;
 
 class GroupsController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
-        $query = Group::query();
+        $tenantId = Auth::user()->tenant_id;
+        $groups = Group::forTenant($tenantId)->with(['subgroups', 'users'])->get();
+        return response()->json(['data' => $groups]);
+    }
 
-        if ($search = $request->query('q')) {
-            $query->where(function ($q) use ($search): void {
-                $q->where('name', 'ilike', "%{$search}%")
-                    ->orWhere('code', 'ilike', "%{$search}%");
-            });
+    public function store(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'name' => 'required|string|max:255',
+            'code' => 'required|string|max:50|unique:groups,code',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['errors' => $validator->errors()], 422);
         }
 
-        $groups = $query->orderBy('name')->paginate($request->integer('per_page', 50));
+        $group = Group::create([
+            'name' => $request->name,
+            'code' => $request->code,
+            'tenant_id' => Auth::user()->tenant_id,
+        ]);
 
-        return response()->json($groups);
+        return response()->json(['data' => $group], 201);
     }
 
-    public function store(StoreGroupRequest $request): JsonResponse
+    public function show(Request $request, $id): JsonResponse
     {
-        $group = Group::create($request->validated());
-
-        return response()->json($group, Response::HTTP_CREATED);
+        $tenantId = Auth::user()->tenant_id;
+        $group = Group::forTenant($tenantId)->with(['subgroups', 'users'])->findOrFail($id);
+        return response()->json(['data' => $group]);
     }
 
-    public function show(int $id): JsonResponse
+    public function update(Request $request, $id): JsonResponse
     {
-        $group = Group::findOrFail($id);
+        $group = Group::forTenant(Auth::user()->tenant_id)->findOrFail($id);
+        
+        $validator = Validator::make($request->all(), [
+            'name' => 'sometimes|string|max:255',
+            'code' => 'sometimes|string|max:50|unique:groups,code,' . $id,
+        ]);
 
-        return response()->json($group);
+        if ($validator->fails()) {
+            return response()->json(['errors' => $validator->errors()], 422);
+        }
+
+        $group->update($request->only(['name', 'code']));
+        return response()->json(['data' => $group->load(['subgroups', 'users'])]);
     }
 
-    public function update(UpdateGroupRequest $request, int $id): JsonResponse
+    public function destroy(Request $request, $id): JsonResponse
     {
-        $group = Group::findOrFail($id);
-        $group->fill($request->validated());
-        $group->save();
-
-        return response()->json($group);
-    }
-
-    public function destroy(int $id): JsonResponse
-    {
-        $group = Group::findOrFail($id);
+        $group = Group::forTenant(Auth::user()->tenant_id)->findOrFail($id);
         $group->delete();
-
-        return response()->json(null, Response::HTTP_NO_CONTENT);
+        return response()->json(['message' => 'Group deleted successfully']);
     }
 }
-
-

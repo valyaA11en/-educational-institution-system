@@ -3,26 +3,13 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
-use App\Services\PersonalAssistantService;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Support\Facades\Auth;
+use Illuminate\Http\Request;
 
 class PersonalAssistantController extends Controller
 {
-    public function __construct(
-        private PersonalAssistantService $assistantService
-    ) {}
-
-    public function today(): JsonResponse
+    public function today(Request $request): JsonResponse
     {
-        $user = Auth::user();
-        $tasks = $this->assistantService->getTodayTasks($user);
-
-        return response()->json([
-            'data' => $tasks,
-            'count' => count($tasks),
-            'urgent_count' => collect($tasks)->where('priority', 'urgent')->count(),
-        ]);
+        return response()->json(['data' => [], 'message' => 'Not implemented yet'], 501);
     }
 }
-

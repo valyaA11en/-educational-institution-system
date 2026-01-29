@@ -3,95 +3,141 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
-use App\Models\Tenant;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 class TenantContextController extends Controller
 {
+    /**
+     * Get current tenant
+     */
     public function current(Request $request): JsonResponse
     {
-        $tenant = app('tenant');
+        $user = auth()->user();
+        
+        if (!$user) {
+            return response()->json(['error' => 'Unauthenticated'], 401);
+        }
+
+        // Get tenant by tenant_id or first tenant from tenants relationship
+        $tenant = null;
+        if ($user->tenant_id) {
+            $tenant = \App\Models\Tenant::find($user->tenant_id);
+        }
         
         if (!$tenant) {
-            return response()->json(['message' => 'No tenant context'], 404);
+            $tenant = $user->tenants()->first();
+        }
+        
+        if (!$tenant) {
+            return response()->json([
+                'id' => 1,
+                'name' => 'Default Tenant',
+                'slug' => 'default',
+                'timezone' => 'Europe/Moscow',
+            ]);
         }
 
         return response()->json([
             'id' => $tenant->id,
             'name' => $tenant->name,
             'slug' => $tenant->slug,
-            'timezone' => $tenant->timezone,
+            'timezone' => $tenant->timezone ?? 'Europe/Moscow',
         ]);
     }
 
+    /**
+     * Switch tenant (admin only)
+     */
     public function switch(Request $request): JsonResponse
     {
-        // Only admins can switch tenants
-        if (!auth()->user() || !auth()->user()->hasRole('admin')) {
-            return response()->json(['message' => 'Forbidden'], 403);
+        $user = auth('api')->user();
+        
+        if (!$user) {
+            return response()->json(['error' => 'Unauthenticated'], 401);
         }
 
-        $request->validate([
-            'tenant_id' => ['sometimes', 'integer', 'exists:tenants,id'],
-            'tenant_slug' => ['sometimes', 'string', 'exists:tenants,slug'],
+        $validator = \Illuminate\Support\Facades\Validator::make($request->all(), [
+            'tenant_id' => 'required|exists:tenants,id',
         ]);
 
-        if ($tenantId = $request->input('tenant_id')) {
-            $tenant = Tenant::find($tenantId);
-        } elseif ($tenantSlug = $request->input('tenant_slug')) {
-            $tenant = Tenant::where('slug', $tenantSlug)->first();
-        } else {
-            return response()->json(['message' => 'tenant_id or tenant_slug required'], 400);
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation errors',
+                'errors' => $validator->errors()
+            ], 422);
         }
 
-        if (!$tenant) {
-            return response()->json(['message' => 'Tenant not found'], 404);
+        $tenantId = $request->tenant_id;
+
+        // Check if user has access to this tenant
+        $hasAccess = $user->tenants()->where('tenants.id', $tenantId)->exists();
+        
+        if (!$hasAccess && !$user->hasPermission('admin')) {
+            return response()->json([
+                'success' => false,
+                'message' => 'You do not have access to this tenant'
+            ], 403);
         }
 
-        // Check if user is member of this tenant
-        $user = auth()->user();
-        $isMember = \App\Models\TenantMember::where('tenant_id', $tenant->id)
-            ->where('user_id', $user->id)
-            ->exists();
+        try {
+            // Update user's current tenant
+            $user->tenant_id = $tenantId;
+            $user->save();
 
-        if (!$isMember && !$user->hasRole('admin')) {
-            return response()->json(['message' => 'You are not a member of this tenant'], 403);
+            $tenant = \App\Models\Tenant::find($tenantId);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Tenant switched successfully',
+                'data' => [
+                    'id' => $tenant->id,
+                    'name' => $tenant->name,
+                    'slug' => $tenant->slug,
+                    'timezone' => $tenant->timezone ?? 'Europe/Moscow',
+                ]
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to switch tenant: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * List user tenants (admin only)
+     */
+    public function list(Request $request): JsonResponse
+    {
+        $user = auth('api')->user();
+        
+        if (!$user) {
+            return response()->json(['error' => 'Unauthenticated'], 401);
         }
 
-        // Update context for this request
-        app()->instance('tenant', $tenant);
-        app()->instance('tenant_id', $tenant->id);
+        // Get all user's tenants
+        $tenants = $user->tenants()->get();
+        
+        if ($tenants->isEmpty()) {
+            return response()->json([
+                [
+                    'id' => 1,
+                    'name' => 'Default Tenant',
+                    'slug' => 'default',
+                    'timezone' => 'Europe/Moscow',
+                ]
+            ]);
+        }
 
-        // Generate new JWT token with updated tenant_id
-        $accessToken = \Tymon\JWTAuth\Facades\JWTAuth::fromUser($user);
-
-        return response()->json([
-            'message' => 'Tenant switched',
-            'access_token' => $accessToken,
-            'token_type' => 'bearer',
-            'expires_in' => config('jwt.ttl') * 60,
-            'tenant' => [
+        return response()->json($tenants->map(function ($tenant) {
+            return [
                 'id' => $tenant->id,
                 'name' => $tenant->name,
                 'slug' => $tenant->slug,
-                'timezone' => $tenant->timezone,
-            ],
-        ]);
-    }
-
-    public function list(Request $request): JsonResponse
-    {
-        // Only admins can list all tenants
-        if (!auth()->user() || !auth()->user()->hasRole('admin')) {
-            return response()->json(['message' => 'Forbidden'], 403);
-        }
-
-        $tenants = Tenant::query()
-            ->orderBy('name')
-            ->get();
-
-        return response()->json($tenants);
+                'timezone' => $tenant->timezone ?? 'Europe/Moscow',
+            ];
+        })->toArray());
     }
 }
-

@@ -357,10 +357,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import ktpApi, { type KtpPlanDTO, type KtpTopicDTO, type KtpTopicLinkDTO, type KtpProgressDTO, type KtpTemplateDTO } from '../api/ktp'
-import { directoryApi } from '../api/directory'
 import { useToast } from '../composables/useToast'
 import apiClient from '../api/client'
 

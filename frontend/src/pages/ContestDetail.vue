@@ -131,7 +131,7 @@
                   icon="mdi-star"
                   size="small"
                   variant="text"
-                  @click="showScoreDialog(item)"
+                  @click="openScoreDialog(item)"
                 />
                 <v-btn
                   icon="mdi-eye"
@@ -222,11 +222,11 @@
               </template>
               <template #item.certificate="{ item }">
                 <v-btn
-                  v-if="item.documentId"
+                  v-if="getResultCertificateId(item)"
                   icon="mdi-download"
                   size="small"
                   variant="text"
-                  @click="downloadCertificate(item.documentId)"
+                  @click="downloadCertificate(getResultCertificateId(item)!)"
                 />
                 <span v-else>-</span>
               </template>
@@ -446,7 +446,7 @@
                 :headers="criteriaEditHeaders"
                 :items="newRubric.criteria_json"
               >
-                <template #item.key="{ item, index }">
+                <template #item.key="{ item }">
                   <v-text-field
                     v-model="item.key"
                     variant="outlined"
@@ -483,7 +483,7 @@
                     hide-details
                   />
                 </template>
-                <template #item.actions="{ item, index }">
+                <template #item.actions="{ index }">
                   <v-btn
                     icon="mdi-delete"
                     size="small"
@@ -507,7 +507,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { contestsApi, type ContestDTO, type ContestSubmissionDTO, type ContestResultDTO } from '../api/contests'
 import { directoryApi, type GroupDTO } from '../api/directory'
 import { usersApi, type UserDTO } from '../api/users'
@@ -515,10 +515,8 @@ import { useAuthStore } from '../stores/auth'
 import { useToast } from '../composables/useToast'
 import FileUploader from '../components/FileUploader.vue'
 import { documentsApi } from '../api/documents'
-import { filesApi } from '../api/files'
 
 const route = useRoute()
-const router = useRouter()
 const auth = useAuthStore()
 const { showToast } = useToast()
 
@@ -628,6 +626,13 @@ const resultHeaders = [
   { title: 'Сертификат', key: 'certificate', sortable: false },
 ]
 
+const getResultCertificateId = (result: ContestResultDTO): number | null => {
+  const participantId = result.submission?.participant?.id
+  if (!participantId) return null
+  const cert = certificates.value.find((c) => c.userId === participantId)
+  return cert?.documentId ?? null
+}
+
 const criteriaHeaders = [
   { title: 'Ключ', key: 'key' },
   { title: 'Название', key: 'title' },
@@ -669,8 +674,8 @@ const saveContest = async () => {
   saving.value = true
   try {
     await contestsApi.update(contest.value.id, {
-      title: contest.value.title,
-      description: contest.value.description,
+      title: contest.value.title || undefined,
+      description: contest.value.description || undefined,
     })
     editMode.value = false
     showToast('Конкурс обновлен', 'success')
@@ -727,7 +732,7 @@ const submitWork = async () => {
   }
 }
 
-const showScoreDialog = (submission: ContestSubmissionDTO) => {
+const openScoreDialog = (submission: ContestSubmissionDTO) => {
   scoringSubmission.value = submission
   scoreForm.value = {
     rubric_json: {},
@@ -819,7 +824,7 @@ const addJury = async () => {
 
 const removeJury = async (userId: number) => {
   // TODO: Implement remove jury endpoint
-  showToast('Удаление жюри не реализовано', 'warning')
+  showToast(`Удаление жюри (ID ${userId}) не реализовано`, 'warning')
 }
 
 const addCriterion = () => {
@@ -902,13 +907,13 @@ const downloadCertificate = async (documentId: number) => {
 
 const viewSubmission = (submission: ContestSubmissionDTO) => {
   // TODO: Open submission detail dialog
-  showToast('Просмотр работы', 'info')
+  showToast(`Просмотр работы: ${submission.title || 'без названия'}`, 'info')
 }
 
 const loadGroups = async () => {
   try {
     const res = await directoryApi.getGroups()
-    groups.value = res.data
+    groups.value = res
   } catch (error) {
     console.error('Failed to load groups:', error)
   }
@@ -917,7 +922,7 @@ const loadGroups = async () => {
 const loadUsers = async () => {
   try {
     const res = await usersApi.list({ per_page: 1000 })
-    users.value = res.data.data || []
+    users.value = res.data || []
   } catch (error) {
     console.error('Failed to load users:', error)
   }

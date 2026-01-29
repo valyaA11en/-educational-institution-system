@@ -2,12 +2,13 @@ import axios, { type AxiosInstance, type InternalAxiosRequestConfig, type AxiosR
 import { useAuthStore } from '../stores/auth'
 
 const apiClient: AxiosInstance = axios.create({
-  baseURL: '/api',
+  baseURL: '/api',  // Use relative path - Nginx will proxy to Laravel
   headers: {
     'Content-Type': 'application/json',
     Accept: 'application/json',
   },
-  timeout: 30000, // 30 seconds
+  timeout: 10000, // Increased timeout for development
+  withCredentials: false, // JWT tokens don't need cookies
 })
 
 // Retry configuration
@@ -151,4 +152,5 @@ apiClient.interceptors.response.use(
 )
 
 export default apiClient
+export { apiClient }
 

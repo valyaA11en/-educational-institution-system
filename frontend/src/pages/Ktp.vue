@@ -280,7 +280,10 @@ const getStatusText = (status: string) => {
 }
 
 const createPlan = async () => {
-  const { valid } = await createFormRef.value?.validate()
+  const form = createFormRef.value
+  if (!form) return
+
+  const { valid } = await form.validate()
   if (!valid) return
 
   try {

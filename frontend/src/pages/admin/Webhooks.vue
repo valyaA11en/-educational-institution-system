@@ -112,7 +112,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useCrudTable } from '../../composables/useCrudTable'
-import { webhooksApi, type WebhookEndpointDTO } from '../../api/webhooks'
+import type { WebhookEndpointDTO } from '../../api/webhooks'
 import { EVENT_TYPES } from '../../api/rules'
 import DataTable from '../../components/admin/DataTable.vue'
 import FormDialog from '../../components/admin/FormDialog.vue'

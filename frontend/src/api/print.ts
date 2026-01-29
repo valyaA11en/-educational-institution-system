@@ -24,7 +24,7 @@ export interface PrintAttendanceParams {
 
 export const printApi = {
   async schedule(params: PrintScheduleParams): Promise<Blob> {
-    const response = await apiClient.get('/print/schedule', {
+    const response = await apiClient.get('/v1/print/schedule', {
       params,
       responseType: 'blob',
     })
@@ -32,7 +32,7 @@ export const printApi = {
   },
 
   async journal(params: PrintJournalParams): Promise<Blob> {
-    const response = await apiClient.get('/print/journal', {
+    const response = await apiClient.get('/v1/print/journal', {
       params,
       responseType: 'blob',
     })
@@ -40,7 +40,7 @@ export const printApi = {
   },
 
   async attendance(params: PrintAttendanceParams): Promise<Blob> {
-    const response = await apiClient.get('/print/attendance', {
+    const response = await apiClient.get('/v1/print/attendance', {
       params,
       responseType: 'blob',
     })

@@ -16,10 +16,10 @@ return new class extends Migration
             'curriculum_topics', 'ktp_topic_links',
         ];
 
-        foreach ($tables as $table) {
-            if (Schema::hasTable($table)) {
-                Schema::table($table, function (Blueprint $table) use ($table) {
-                    if (!Schema::hasColumn($table, 'tenant_id')) {
+        foreach ($tables as $tableName) {
+            if (Schema::hasTable($tableName)) {
+                Schema::table($tableName, function (Blueprint $table) use ($tableName) {
+                    if (!Schema::hasColumn($tableName, 'tenant_id')) {
                         $table->unsignedBigInteger('tenant_id')->nullable()->after('id');
                         $table->foreign('tenant_id')->references('id')->on('tenants')->onDelete('cascade');
                         $table->index('tenant_id');
@@ -39,12 +39,12 @@ return new class extends Migration
             'curriculum_topics', 'ktp_topic_links',
         ];
 
-        foreach ($tables as $table) {
-            if (Schema::hasTable($table)) {
-                Schema::table($table, function (Blueprint $table) use ($table) {
-                    if (Schema::hasColumn($table, 'tenant_id')) {
-                        $table->dropForeign([$table . '_tenant_id_foreign']);
-                        $table->dropIndex([$table . '_tenant_id_index']);
+        foreach ($tables as $tableName) {
+            if (Schema::hasTable($tableName)) {
+                Schema::table($tableName, function (Blueprint $table) use ($tableName) {
+                    if (Schema::hasColumn($tableName, 'tenant_id')) {
+                        $table->dropForeign(['tenant_id']);
+                        $table->dropIndex(['tenant_id']);
                         $table->dropColumn('tenant_id');
                     }
                 });

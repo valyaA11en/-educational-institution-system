@@ -140,10 +140,6 @@ const deleteDialog = ref(false)
 const deleting = ref(false)
 const deletingItem = ref<UserDTO | null>(null)
 
-const rules = {
-  required: (v: string) => !!v || 'Обязательное поле',
-}
-
 const formatDate = (date?: string) => {
   if (!date) return '-'
   return new Date(date).toLocaleDateString('ru-RU')

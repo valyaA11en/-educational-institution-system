@@ -2,28 +2,48 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use App\Traits\HasTenant;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class Room extends Model
 {
-    use HasFactory, HasTenant;
-
     protected $fillable = [
         'name',
         'code',
         'capacity',
-        'attributes',
+        'room_type',
         'tenant_id',
     ];
 
-    protected function casts(): array
+    protected $casts = [
+        'tenant_id' => 'integer',
+        'capacity' => 'integer',
+        'created_at' => 'datetime',
+        'updated_at' => 'datetime',
+    ];
+
+    /**
+     * Get the tenant that owns the room.
+     */
+    public function tenant(): BelongsTo
     {
-        return [
-            'attributes' => 'array',
-        ];
+        return $this->belongsTo(Tenant::class);
+    }
+
+    /**
+     * Get the schedule items for this room.
+     */
+    public function scheduleItems(): HasMany
+    {
+        return $this->hasMany(ScheduleItem::class);
+    }
+
+    /**
+     * Scope to filter by tenant.
+     */
+    public function scopeForTenant($query, $tenantId)
+    {
+        return $query->where('tenant_id', $tenantId);
     }
 }
-
-

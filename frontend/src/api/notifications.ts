@@ -10,9 +10,12 @@ export interface NotificationItemDTO {
 }
 
 export const notificationsApi = {
-  async list(): Promise<NotificationItemDTO[]> {
-    const response = await apiClient.get<NotificationItemDTO[]>('/v1/notifications')
-    return response.data
+  async list(params?: { status?: string }): Promise<NotificationItemDTO[]> {
+    const { data } = await apiClient.get<{ data?: NotificationItemDTO[] }>('/v1/notifications', {
+      params: params?.status ? { status: params.status } : undefined,
+    })
+    const arr = Array.isArray(data?.data) ? data.data : (Array.isArray(data) ? data : [])
+    return arr as NotificationItemDTO[]
   },
 
   async markRead(id: number): Promise<void> {
@@ -21,6 +24,10 @@ export const notificationsApi = {
 
   async markAllRead(): Promise<void> {
     await apiClient.post('/v1/notifications/read-all')
+  },
+
+  async delete(id: number): Promise<void> {
+    await apiClient.delete(`/v1/notifications/${id}`)
   },
 }
 

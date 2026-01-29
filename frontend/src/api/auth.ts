@@ -21,7 +21,11 @@ export interface Verify2FAResponseDTO {
 
 export const authApi = {
   async login(data: LoginRequestDTO): Promise<LoginResponseDTO> {
-    const response = await apiClient.post<LoginResponseDTO>('/v1/auth/login', data)
+    // Real API call to Laravel backend
+    const response = await apiClient.post<LoginResponseDTO>('/v1/auth/login', {
+      emailOrPhone: data.emailOrPhone,
+      password: data.password,
+    })
     return response.data
   },
 
@@ -34,13 +38,29 @@ export const authApi = {
   },
 
   async refresh(refreshToken: string): Promise<AuthTokensDTO> {
-    const response = await apiClient.post<AuthTokensDTO>('/v1/auth/refresh', {
+    // Send refresh token in Authorization header or body
+    const response = await apiClient.post<{
+      access_token: string
+      refresh_token: string
+      expires_in: number
+    }>('/v1/auth/refresh', {
       refreshToken,
+    }, {
+      headers: {
+        // Also try to send as Bearer token if available
+        ...(refreshToken ? { Authorization: `Bearer ${refreshToken}` } : {})
+      }
     })
-    return response.data
+    // Convert snake_case to camelCase for frontend
+    return {
+      accessToken: response.data.access_token,
+      refreshToken: response.data.refresh_token,
+      expiresIn: response.data.expires_in,
+    }
   },
 
   async me(): Promise<MeDTO> {
+    // Real API call to Laravel backend
     const response = await apiClient.get<MeDTO>('/v1/auth/me')
     return response.data
   },

@@ -40,7 +40,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref } from 'vue'
 
 interface Props {
   headers: any[]
@@ -57,7 +57,7 @@ interface Props {
   additionalFilters?: boolean
 }
 
-const props = withDefaults(defineProps<Props>(), {
+withDefaults(defineProps<Props>(), {
   loading: false,
   showCreateButton: true,
   additionalFilters: false,

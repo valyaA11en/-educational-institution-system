@@ -171,4 +171,109 @@ export const scheduleApi = {
     const response = await apiClient.get('/v1/schedule/diff', { params })
     return response.data
   },
+
+  createItem: async (payload: {
+    version_id: number
+    date: string
+    time_slot_id: number
+    group_id: number
+    subgroup_id?: number | null
+    subject_id: number
+    teacher_user_id: number
+    room_id: number
+    override_reason?: string | null
+    force?: boolean
+  }): Promise<ScheduleItemDTO> => {
+    const response = await apiClient.post('/v1/schedule/items', payload)
+    return response.data
+  },
+
+  updateItem: async (id: number, payload: {
+    date?: string
+    time_slot_id?: number
+    group_id?: number
+    subgroup_id?: number | null
+    subject_id?: number
+    teacher_user_id?: number
+    room_id?: number
+    override_reason?: string | null
+    force?: boolean
+  }): Promise<ScheduleItemDTO> => {
+    const response = await apiClient.put(`/v1/schedule/items/${id}`, payload)
+    return response.data
+  },
+
+  deleteItem: async (id: number): Promise<void> => {
+    await apiClient.delete(`/v1/schedule/items/${id}`)
+  },
+
+  suggestRoom: async (payload: {
+    version_id: number
+    date: string
+    time_slot_id: number
+    subject_id?: number
+  }): Promise<Array<{ id: number; name: string; capacity?: number }>> => {
+    const response = await apiClient.post('/v1/schedule/suggest-room', payload)
+    return response.data.data
+  },
+
+  suggestTeacher: async (payload: {
+    version_id: number
+    date: string
+    time_slot_id: number
+    subject_id: number
+    group_id?: number
+  }): Promise<Array<{ id: number; fio: string; email?: string }>> => {
+    const response = await apiClient.post('/v1/schedule/suggest-teacher', payload)
+    return response.data.data
+  },
+
+  getReplacements: async (params?: {
+    schedule_item_id?: number
+    date?: string
+    status?: string
+    page?: number
+    per_page?: number
+  }): Promise<{
+    data: Array<{
+      id: number
+      schedule_item_id: number
+      date: string
+      new_teacher_user_id: number | null
+      new_room_id: number | null
+      reason: string
+      status: string
+      scheduleItem?: ScheduleItemDTO
+      newTeacher?: { id: number; fio: string }
+      newRoom?: { id: number; name: string }
+    }>
+    current_page: number
+    per_page: number
+    total: number
+    last_page: number
+  }> => {
+    const response = await apiClient.get('/v1/schedule/replacements', { params })
+    return response.data
+  },
+
+  createReplacement: async (payload: {
+    schedule_item_id: number
+    date: string
+    new_teacher_user_id?: number | null
+    new_room_id?: number | null
+    reason: string
+  }): Promise<any> => {
+    const response = await apiClient.post('/v1/schedule/replacements', payload)
+    return response.data
+  },
+
+  approveReplacement: async (id: number): Promise<any> => {
+    const response = await apiClient.post(`/v1/schedule/replacements/${id}/approve`)
+    return response.data
+  },
+
+  applyReplacement: async (id: number): Promise<any> => {
+    const response = await apiClient.post(`/v1/schedule/replacements/${id}/apply`)
+    return response.data
+  },
 }

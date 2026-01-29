@@ -1,10 +1,13 @@
 // WebSocket payload DTO matching backend
 
 export interface WebSocketPayloadDTO {
-  eventId: number
+  eventId?: number // Legacy for notification deliveries
+  deliveryId?: number // For ws_event_deliveries
   eventType: string
   payload: Record<string, any>
-  createdAt: string
+  createdAt?: string
+  timestamp?: string
+  type?: string // Event type from server
 }
 
 

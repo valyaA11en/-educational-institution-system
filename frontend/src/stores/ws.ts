@@ -31,6 +31,18 @@ export const useWsStore = defineStore('ws', {
         return
       }
 
+      // Check if WebSocket is configured
+      const pusherKey = import.meta.env.VITE_PUSHER_APP_KEY
+      const isValidKey = pusherKey && 
+                         pusherKey !== 'local-key' && 
+                         pusherKey !== 'app-key' && 
+                         pusherKey.trim() !== ''
+      
+      if (!isValidKey) {
+        console.warn('WebSocket not configured, skipping initialization')
+        return
+      }
+
       // Setup event handlers first
       this.setupEventHandlers()
 

@@ -8,21 +8,26 @@ use Illuminate\Http\Request;
 
 class TwoFactorStatusController extends Controller
 {
+    /**
+     * Get 2FA status
+     */
     public function status(Request $request): JsonResponse
     {
         $user = auth()->user();
-        
         if (!$user) {
-            return response()->json(['message' => 'Unauthenticated'], 401);
+            return response()->json(['error' => 'Unauthenticated'], 401);
         }
 
-        $twoFactor = \App\Models\TwoFactorAuth::where('user_id', $user->id)->first();
+        $enabled = app(\App\Services\Auth\TwoFactorService::class)->is2FAEnabled($user);
+        $row = \Illuminate\Support\Facades\DB::table('user_2fa')->where('user_id', $user->id)->first();
+        $recovery = $row && !empty($row->recovery_codes_json)
+            ? json_decode($row->recovery_codes_json, true)
+            : [];
+        $recoveryCount = is_array($recovery) ? count($recovery) : 0;
 
         return response()->json([
-            'enabled' => $twoFactor?->enabled ?? false,
-            'has_secret' => !empty($twoFactor?->totp_secret),
+            'enabled' => $enabled,
+            'recovery_codes_count' => $recoveryCount,
         ]);
     }
 }
-
-

@@ -128,8 +128,6 @@ export const useAuthStore = defineStore('auth', {
         await ws.init()
 
         return { requires2fa: false }
-      } catch (error) {
-        throw error
       } finally {
         this.loading = false
       }
@@ -151,8 +149,6 @@ export const useAuthStore = defineStore('auth', {
         const { useWsStore } = await import('./ws')
         const ws = useWsStore()
         await ws.init()
-      } catch (error) {
-        throw error
       } finally {
         this.loading = false
       }
